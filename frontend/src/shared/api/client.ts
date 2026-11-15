@@ -38,10 +38,7 @@ export class ApiError extends Error {
     }
 }
 
-/** True when the user must sign in again (401 from the API). */
-export const isAuthError = (error: unknown): error is ApiError =>
-    error instanceof ApiError && error.status === 401;
-
+/** Reads `Retry-After` into whole seconds, or null when absent/unparseable. */
 const readRetryAfter = (response: Response): number | null => {
     const header = response.headers.get("retry-after");
     if (header === null) return null;

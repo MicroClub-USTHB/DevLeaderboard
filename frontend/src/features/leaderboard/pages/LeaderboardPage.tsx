@@ -8,6 +8,7 @@ import { Button } from "@/shared/ui/Button";
 import { EmptyState, ErrorState, Skeleton } from "@/shared/ui/States";
 import { useLeaderboard, useLeaderboardMeta } from "../api";
 import { PeriodTabs } from "../components/PeriodTabs";
+import { RefreshButton } from "../components/RefreshButton";
 import { ScoreCards } from "../components/ScoreCards";
 import { ScoreTable } from "../components/ScoreTable";
 import { MetaPanel } from "../components/MetaPanel";
@@ -48,7 +49,11 @@ export const LeaderboardPage = (): ReactNode => {
                     </p>
                     <h1 className="mt-1 text-3xl font-semibold tracking-tight">{org}</h1>
                 </div>
-                <PeriodTabs value={period} onChange={changePeriod} disabled={leaderboard.isFetching} />
+                <div className="flex flex-wrap items-center gap-2">
+                    <PeriodTabs value={period} onChange={changePeriod} disabled={leaderboard.isFetching} />
+                    {/* Refresh the period currently on screen. */}
+                    <RefreshButton org={org} period={period} label="Refresh" />
+                </div>
             </div>
 
             {/* Warnings from the last collection run — non-blocking by design. */}
@@ -117,10 +122,8 @@ export const LeaderboardPage = (): ReactNode => {
                     title="No snapshot yet"
                     description={leaderboard.data.message}
                     action={
-                        <Button variant="secondary" disabled>
-                            <RefreshCw size={15} aria-hidden />
-                            Run the first refresh
-                        </Button>
+                        // Nothing exists yet, so kick off every period at once.
+                        <RefreshButton org={org} label="Run the first refresh" />
                     }
                 />
             ) : (

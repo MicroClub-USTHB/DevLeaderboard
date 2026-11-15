@@ -55,7 +55,7 @@ export const Button = ({
 );
 
 /** Small inline activity indicator sized to sit inside buttons. */
-export const Spinner = ({ className }: { className?: string }): ReactNode => (
+const Spinner = ({ className }: { className?: string }): ReactNode => (
     <svg
         className={cn("size-4 animate-spin", className)}
         viewBox="0 0 24 24"

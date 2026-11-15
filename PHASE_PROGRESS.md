@@ -1,55 +1,62 @@
-# Phase Progress — DevLeaderboard
+# Phase Progress — DevLeaderboard frontend
 
-> **Status: paused mid-Phase 5 — "done for today" (user request).**
-> No phase is being completed right now; handoff notes below only.
+> **Status: complete.** Phases 0–7 are done, verified and committed. This file records what each
+> phase shipped and the evidence that it works; it is a project record, not a to-do list.
 
-## Completed phases
+## Phases
 
 | Phase | Scope | Status |
 |---|---|---|
-| 0 | Scaffold & shell (Vite, React 19, Tailwind v4 tokens, router, providers, ESLint) | ✅ done |
-| 1 | API layer (`shared/api/types.ts`, `shared/api/client.ts`, `cn`, `format`) | ✅ done |
-| 2 | Leaderboard read path (queries, table/cards, period tabs, all states) | ✅ done |
-| 3 | Meta & resilience (ETag/304, toasts, stale banner, failure drill vs dead GitHub) | ✅ done |
-| 4 | Auth (context/provider split, protected route, login/register pages) | ✅ done |
+| 0 | Scaffold & shell — Vite, React 19, strict TS, Tailwind v4 `@theme` tokens, router, providers, ESLint | ✅ done |
+| 1 | API layer — typed DTOs, fetch wrapper (`ApiError`, ETag cache, network→status 0), `cn`, formatters | ✅ done |
+| 2 | Read path — TanStack Query hooks, period tabs, table + mobile cards, rank badges, all five page states | ✅ done |
+| 3 | Resilience — 304 replay, toast system, stale-data banner, failure drill against a dead GitHub API | ✅ done |
+| 4 | Auth — session context/provider split, login/register (RHF + zod), header session state, redirects | ✅ done |
+| 5 | Refresh — `useRefresh` mutation + `RefreshButton`, auth-gated, rate-limit aware, cache invalidation | ✅ done |
+| 6 | Temporary test suite — API client, page states, refresh flow, auth flows; green twice, then removed | ✅ done |
+| 7 | Cleanup & ship — gates/tests removed, dead code deleted, clean install, README, final commit | ✅ done |
 
-## Phase 5 — Refresh mutation (IN PROGRESS, paused today)
+## What Phase 5 ships
 
-### Done
-- `useRefresh` mutation added in `frontend/src/features/leaderboard/api.ts`.
-  - Calls `POST /leaderboard/:org/refresh?period=X` (omitting `period` refreshes all periods).
-  - On success: removes the org's cached ETag copies, invalidates meta, success toast.
-  - On `401`: logout + session-expired toast + navigate to `/login` with `state.from`.
-  - On `429`: retry-aware toast.
-- **Fix applied today:** TS `2339` errors on mutation error fields (`Property ... does not exist on type 'never'`).
+- `POST /leaderboard/:org/refresh?period=X`; omitting `period` refreshes all three periods.
+- Header **Refresh** re-syncs the visible period; the empty-state CTA **Run the first refresh**
+  syncs everything.
+- Signed out → the button is disabled with a "Sign in to trigger a refresh" hint. In-flight →
+  disabled + spinner, so a double click can never start two syncs.
+- `401` → session cleared, toast, redirect to `/login`; `429` → toast with the server's
+  `Retry-After`; other failures → the API message.
+- Success → toasts, then invalidates the org's leaderboard + meta queries so the visible table
+  refetches immediately.
 
-### Not done (resume next session)
-1. Recreate `RefreshButton` component cleanly (a half-finished draft was written then **deleted** today; do not re-add the bad version).
-2. Wire `RefreshButton` into `LeaderboardPage` (enable/disable by auth state, replace disabled "Run the first refresh").
-3. Double-click protection via mutation `isPending`.
-4. Phase 5 gate: `typecheck` + `lint` + full phase regression suite + refresh-specific checks, all green.
+## Bug found and fixed while testing
 
-## Phase 6 — Tests (planned)
+`onSuccess` originally called `queryClient.removeQueries(...)`, which drops the cache entry without
+refetching. The page kept showing the pre-refresh snapshot even though the refresh succeeded.
+Replaced with `invalidateQueries`, which marks the org's queries stale and refetches the active
+one (inactive periods refetch when opened). The ETag cannot cause a false `304` here because the
+validator embeds `generatedAt`.
 
-- Temporary vitest + Testing Library tests (API errors, leaderboard states, auth, refresh).
-- Run green **twice**, then delete tests + test tooling before final commit (tests policy).
+A TypeScript trap was also fixed: calling `isAuthError(error)` inside `onError` (where `error` was
+already typed `ApiError`) narrowed the parameter to `never`, producing `TS2339`. The handler now
+reads `status` / `retryAfterSeconds` / `message` into locals before branching.
 
-## Phase 7 — Cleanup & ship (final)
+## Final verification (Phase 7)
 
-- Delete all temporary gate scripts (`phase*.gate.*`, `phase*.render.*`, temp db helpers) and debug helpers.
-- Full clean-install gates (rm `node_modules`, reinstall, typecheck/lint/build, live API/render gates).
-- Update root README.
-- Final commit + push to GitHub.
+Run on a clean `npm ci` (frontend) with the backend live on port 3000:
 
-## Issues found & fixed today (Phase 5 start)
+- `npm run typecheck` ✅ · `npm run lint` ✅ · `npm run build` ✅
+- Temporary suite before removal: **27/27** across the API client (9), leaderboard page (9) and
+  auth flows (9) — run green twice. Tests and all test tooling were then deleted, per policy.
+- Live API smoke (through the Vite `/api` proxy): snapshot, limit, ranking, weak ETag → `304`,
+  `202` for an unknown org, `401` for an anonymous refresh, register → JWT, one real single-period
+  refresh → `200`, fresh snapshot readable, meta reports weights + all stored periods. **20/20**.
+- Dev server serves the SPA shell, proxies `/api`, and falls back to `index.html` for deep links.
 
-1. `useMutation` `onError` error fields typed as `never` when using `isAuthError(error)` on a pre-typed `ApiError`.
-   - Fixed by reading `error.status`, `error.retryAfterSeconds`, `error.message` into locals **before** any branch.
-   - Typecheck + lint now green.
-2. Half-finished `RefreshButton.tsx` draft (`handleClick` placeholder) was deleted; re-create cleanly when Phase 5 resumes.
+## Stack decisions
 
-## Gate summary (as of end of Phase 4 — all green)
-
-- `typecheck`, `lint`, `build` ✅
-- Phase 1 API (live) ✅ 15/15 · Phase 2 render ✅ 8/8 · Phase 3 API ✅ 18/18 · Phase 3 render ✅ 10/10 · Phase 4 API ✅ 16/16 · Phase 4 render ✅ 16/16
-- Failure drill ✅ (dead `GITHUB_API_URL` → reads `200`, refresh `502`, reads `200` after)
+- Dark-only theme, deep-blue accent on zinc surfaces, all colors as `@theme` roles
+  (`canvas`, `surface`, `overlay`, `line`, `ink*`, `accent-*`).
+- Self-hosted Inter Variable via `@fontsource-variable/inter` — no runtime font CDN.
+- Hand-written DTOs (no generated client); one fetch wrapper for every request.
+- TanStack Query owns caching, retries and invalidation; auth state lives in one context backed by
+  `localStorage` (`dlb.auth`), read synchronously so there is no logged-out flash.

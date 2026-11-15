@@ -6,9 +6,7 @@ import reactRefresh from "eslint-plugin-react-refresh";
 
 export default tseslint.config(
     {
-        // Temporary verification scripts (removed before the final commit).
-        // They are entry points, not app modules — HMR rules don't apply.
-        ignores: ["dist", "*.gate.*", "*.render.*"],
+        ignores: ["dist"],
     },
     {
         files: ["**/*.{ts,tsx}"],

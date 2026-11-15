@@ -20,7 +20,7 @@ const shouldRetry = (failureCount: number, error: unknown): boolean => {
     return false;
 };
 
-export const leaderboardKey = (params: LeaderboardParams): readonly unknown[] => [
+const leaderboardKey = (params: LeaderboardParams): readonly unknown[] => [
     "leaderboard",
     params.org,
     params.period,
@@ -73,9 +73,11 @@ export const useRefresh = (org: string) => {
                 { method: "POST", token: token ?? undefined },
             ),
         onSuccess: (response) => {
-            // Drop the ETag copies: the snapshot changed, so the cached
-            // validators are meaningless now.
-            queryClient.removeQueries({ queryKey: ["leaderboard", org], exact: false });
+            // The snapshots changed: mark the org's leaderboards stale so the
+            // visible table refetches immediately (other periods refetch when
+            // opened). The ETag cookie is keyed by path and carries
+            // `generatedAt`, so the old validator can never answer 304 here.
+            void queryClient.invalidateQueries({ queryKey: ["leaderboard", org] });
             void queryClient.invalidateQueries({ queryKey: ["leaderboard-meta", org] });
 
             const periods = response.results.map((result) => result.period).join(", ");
