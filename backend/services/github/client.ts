@@ -25,6 +25,19 @@ interface GraphqlErrorShape {
     type?: string;
 }
 
+/**
+ * GraphQL answers HTTP 200 even for failures, so the error `type` is mapped
+ * onto the closest HTTP status. That keeps the controller's upstream error
+ * handling (rate limit, not found, permission) working for both APIs.
+ */
+const GRAPHQL_ERROR_STATUS: Readonly<Record<string, number>> = {
+    RATE_LIMITED: 429,
+    NOT_FOUND: 404,
+    FORBIDDEN: 403,
+    INSUFFICIENT_SCOPES: 403,
+    UNAUTHORIZED: 401,
+};
+
 const parseRateLimitHeaders = (headers: Headers): RateLimitInfo => {
     const info: RateLimitInfo = {};
 
@@ -182,7 +195,7 @@ export const createGitHubClient = (options: RestClientOptions): GitHubClient => 
             }
 
             const message = await readErrorMessage(response);
-            throw new GitHubError(message, status, rateLimit);
+            throw new GitHubError(message, status, { rateLimit });
         }
     };
 
@@ -198,21 +211,24 @@ export const createGitHubClient = (options: RestClientOptions): GitHubClient => 
         const payload = await readJson<{ data?: T | null; errors?: GraphqlErrorShape[] }>(response);
 
         if (payload === undefined || payload === null) {
-            throw new GitHubError("GitHub GraphQL returned an empty response", response.status, rateLimit);
+            throw new GitHubError("GitHub GraphQL returned an empty response", response.status, {
+                rateLimit,
+            });
         }
 
         if (payload.errors !== undefined && payload.errors.length > 0) {
             const first = payload.errors[0];
-            const message = first?.message ?? "Unknown error";
-            // GraphQL always answers HTTP 200, so the error `type` carries the
-            // real outcome: rate-limited -> 429, missing resource -> 404.
-            const status =
-                first?.type === "RATE_LIMITED" ? 429 : first?.type === "NOT_FOUND" ? 404 : 0;
-            throw new GitHubError(`GitHub GraphQL error: ${message}`, status, rateLimit);
+            const message = payload.errors
+                .map((entry) => entry.message ?? "Unknown error")
+                .join("; ");
+            const type = first?.type;
+            const status = type === undefined ? 0 : (GRAPHQL_ERROR_STATUS[type] ?? 0);
+
+            throw new GitHubError(`GitHub GraphQL error: ${message}`, status, { rateLimit, type });
         }
 
         if (payload.data === undefined || payload.data === null) {
-            throw new GitHubError("GitHub GraphQL returned no data", response.status, rateLimit);
+            throw new GitHubError("GitHub GraphQL returned no data", response.status, { rateLimit });
         }
 
         return payload.data;
@@ -224,15 +240,21 @@ export const createGitHubClient = (options: RestClientOptions): GitHubClient => 
 
         while (url !== undefined) {
             if (pages >= maxPages) {
-                throw new GitHubError(`Pagination exceeded the ${maxPages} page limit`, 0, rateLimit);
+                throw new GitHubError(`Pagination exceeded the ${maxPages} page limit`, 0, {
+                    rateLimit,
+                });
             }
 
             const response = await rawRequest(url, { method: "GET" });
             pages += 1;
 
             const items = await readJson<unknown>(response);
+            // 204 No Content is a legitimate empty collection (e.g. an empty repo).
+            if (items === undefined || items === null) return;
             if (!Array.isArray(items)) {
-                throw new GitHubError(`Expected a JSON array from ${url}`, response.status, rateLimit);
+                throw new GitHubError(`Expected a JSON array from ${url}`, response.status, {
+                    rateLimit,
+                });
             }
 
             yield* items as T[];

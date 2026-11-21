@@ -2,8 +2,15 @@ import { schedule } from "node-cron";
 import type { ScheduledTask } from "node-cron";
 import { config } from "../config/config.js";
 import { logger } from "../lib/logger.js";
-import { PERIODS, type Period } from "../services/leaderboard/periods.js";
+import type { Period } from "../services/leaderboard/periods.js";
 import { syncLeaderboard } from "../services/leaderboard/sync.js";
+
+/**
+ * `custom` cannot be scheduled: it needs a range from the caller. Both fixed
+ * periods are refreshed, and the all-time snapshot's 24h freshness window
+ * means the 6h cron only recomputes it once a day.
+ */
+const SCHEDULED_PERIODS: readonly Period[] = ["month", "all"];
 
 interface OrgRefreshOutcome {
     orgLogin: string;
@@ -23,7 +30,7 @@ let task: ScheduledTask | undefined;
 const refreshOrg = async (orgLogin: string): Promise<OrgRefreshOutcome[]> => {
     const outcomes: OrgRefreshOutcome[] = [];
 
-    for (const period of PERIODS) {
+    for (const period of SCHEDULED_PERIODS) {
         try {
             const result = await syncLeaderboard(orgLogin, period);
             outcomes.push({
@@ -68,6 +75,14 @@ const runScheduled = async (orgs: readonly string[]): Promise<void> => {
     for (const org of orgs) {
         await refreshOrg(org);
     }
+};
+
+/**
+ * Runs the scheduled refresh immediately. Used at boot so the default org has
+ * a snapshot before the first visitor arrives.
+ */
+export const refreshOrgsNow = async (orgs: readonly string[]): Promise<void> => {
+    await runScheduled(orgs);
 };
 
 /**

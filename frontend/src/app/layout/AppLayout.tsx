@@ -1,63 +1,74 @@
-import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
-import { Trophy } from "lucide-react";
-import { useAuth } from "@/features/auth/authContext";
-
-const navLinkClass = ({ isActive }: { isActive: boolean }): string =>
-    [
-        "rounded-lg px-3 py-2 text-sm font-medium transition-colors duration-150",
-        isActive ? "bg-overlay text-ink" : "text-ink-muted hover:bg-overlay/60 hover:text-ink",
-    ].join(" ");
+import { useState, type FormEvent, type ReactNode } from "react";
+import { Link, Outlet, useNavigate } from "react-router-dom";
+import { Search, Trophy } from "lucide-react";
+import { DEFAULT_ORG, isValidOrgLogin } from "@/shared/lib/org";
 
 /**
- * Shared page chrome: brand, primary nav, and the routed outlet below.
- * Deliberately quiet — the leaderboard is the hero of the product.
+ * Shared page chrome: brand, a compact org switcher, and the routed outlet.
+ * The app is not locked to one organization — the default is just where the
+ * root route lands.
  */
-export const AppLayout = (): React.ReactNode => {
-    const { user, logout } = useAuth();
+export const AppLayout = (): ReactNode => {
     const navigate = useNavigate();
+    const [value, setValue] = useState("");
+    const [error, setError] = useState<string | null>(null);
 
-    const handleLogout = (): void => {
-        logout();
-        navigate("/");
+    const handleSubmit = (event: FormEvent<HTMLFormElement>): void => {
+        event.preventDefault();
+
+        const org = value.trim();
+        if (!isValidOrgLogin(org)) {
+            setError("Enter a valid GitHub organization.");
+            return;
+        }
+
+        setError(null);
+        setValue("");
+        navigate(`/leaderboard/${encodeURIComponent(org)}`);
     };
 
     return (
         <div className="flex min-h-screen flex-col">
             <header className="sticky top-0 z-10 border-b border-line bg-canvas/85 backdrop-blur">
                 <div className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between gap-4 px-4 sm:px-6">
-                    <Link to="/" className="flex items-center gap-2.5 font-semibold tracking-tight">
+                    <Link
+                        to={`/leaderboard/${DEFAULT_ORG}`}
+                        className="flex items-center gap-2.5 font-semibold tracking-tight"
+                    >
                         <span className="flex size-8 items-center justify-center rounded-lg bg-accent-600 text-white">
                             <Trophy size={16} aria-hidden />
                         </span>
                         <span className="text-[15px]">DevLeaderboard</span>
                     </Link>
 
-                    <nav className="flex items-center gap-1">
-                        <NavLink to="/" end className={navLinkClass}>
-                            Home
-                        </NavLink>
-                        {user !== null ? (
-                            <>
-                                <span
-                                    className="hidden max-w-[10rem] truncate px-3 text-sm text-ink-muted sm:block"
-                                    title={user.email}
-                                >
-                                    {user.name}
-                                </span>
-                                <button
-                                    type="button"
-                                    onClick={handleLogout}
-                                    className="rounded-lg px-3 py-2 text-sm font-medium text-ink-muted transition-colors duration-150 hover:bg-overlay/60 hover:text-ink focus-visible:outline-2 focus-visible:outline-accent-500"
-                                >
-                                    Sign out
-                                </button>
-                            </>
-                        ) : (
-                            <NavLink to="/login" className={navLinkClass}>
-                                Sign in
-                            </NavLink>
+                    <form onSubmit={handleSubmit} className="relative" noValidate>
+                        <Search
+                            size={14}
+                            aria-hidden
+                            className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-faint"
+                        />
+                        <input
+                            value={value}
+                            onChange={(event) => {
+                                setValue(event.target.value);
+                                if (error !== null) setError(null);
+                            }}
+                            placeholder="Switch org"
+                            aria-label="GitHub organization name"
+                            aria-invalid={error !== null}
+                            autoComplete="off"
+                            spellCheck={false}
+                            className="h-8 w-36 rounded-lg border border-line bg-surface pl-8 pr-2.5 text-sm text-ink placeholder:text-ink-faint focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/25 sm:w-44"
+                        />
+                        {error !== null && (
+                            <p
+                                role="alert"
+                                className="absolute right-0 top-full mt-1 w-56 rounded-md border border-danger/30 bg-surface px-2.5 py-1.5 text-xs text-danger shadow-lg"
+                            >
+                                {error}
+                            </p>
                         )}
-                    </nav>
+                    </form>
                 </div>
             </header>
 

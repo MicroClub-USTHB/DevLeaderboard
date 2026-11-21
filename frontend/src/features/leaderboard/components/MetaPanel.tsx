@@ -1,15 +1,18 @@
 import type { ReactNode } from "react";
-import type { LeaderboardMeta, Period } from "@/shared/api/types";
+import type { LeaderboardMeta, SnapshotSummary } from "@/shared/api/types";
 import { formatDateTime, formatNumber, formatRelativeTime } from "@/shared/lib/format";
+import { PERIOD_LABELS } from "../constants";
 
 interface MetaPanelProps {
     meta: LeaderboardMeta;
 }
 
-const PERIOD_LABELS: Record<Period, string> = {
-    "7d": "7 days",
-    "30d": "30 days",
-    year: "This year",
+/** Custom ranges are identified by their date keys, not a fixed label. */
+const snapshotLabel = (snapshot: SnapshotSummary): string => {
+    if (snapshot.period !== "custom") return PERIOD_LABELS[snapshot.period];
+
+    const [from, to] = snapshot.rangeKey.split("_");
+    return from !== undefined && to !== undefined ? `${from} → ${to}` : PERIOD_LABELS.custom;
 };
 
 /**
@@ -55,8 +58,11 @@ export const MetaPanel = ({ meta }: MetaPanelProps): ReactNode => {
                 ) : (
                     <dl className="mt-3 space-y-1.5 text-sm">
                         {snapshots.map((snapshot) => (
-                            <div key={snapshot.period} className="flex justify-between gap-3">
-                                <dt className="text-ink-muted">{PERIOD_LABELS[snapshot.period]}</dt>
+                            <div
+                                key={`${snapshot.period}:${snapshot.rangeKey}`}
+                                className="flex justify-between gap-3"
+                            >
+                                <dt className="text-ink-muted">{snapshotLabel(snapshot)}</dt>
                                 <dd className="text-right">
                                     <span className="font-medium text-ink tabular">
                                         {formatNumber(snapshot.entryCount)}

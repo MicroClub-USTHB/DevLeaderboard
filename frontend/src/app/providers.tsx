@@ -1,7 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { ToastProvider } from "@/shared/ui/ToastProvider";
-import { AuthProvider } from "@/features/auth/AuthProvider";
 
 /**
  * One client for the whole app. The leaderboard is read-heavy and cheap to
@@ -23,8 +22,6 @@ interface AppProvidersProps {
 
 export const AppProviders = ({ children }: AppProvidersProps): ReactNode => (
     <QueryClientProvider client={queryClient}>
-        <ToastProvider>
-            <AuthProvider>{children}</AuthProvider>
-        </ToastProvider>
+        <ToastProvider>{children}</ToastProvider>
     </QueryClientProvider>
 );

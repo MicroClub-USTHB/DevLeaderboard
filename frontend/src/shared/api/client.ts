@@ -55,8 +55,6 @@ const readRetryAfter = (response: Response): number | null => {
 /** Fallback messages per status so users never see a raw "502". */
 const fallbackMessage = (status: number): string => {
     switch (status) {
-        case 401:
-            return "Please sign in to continue.";
         case 404:
             return "Not found.";
         case 429:
@@ -89,8 +87,6 @@ const toApiError = async (response: Response): Promise<ApiError> => {
 export interface RequestOptions {
     method?: "GET" | "POST";
     body?: unknown;
-    /** Sent as `Authorization: Bearer <token>` — refresh only. */
-    token?: string;
     signal?: AbortSignal;
     /**
      * Sends `If-None-Match` and answers a 304 from the local copy.
@@ -100,11 +96,10 @@ export interface RequestOptions {
 }
 
 export const request = async <T>(path: string, options: RequestOptions = {}): Promise<T> => {
-    const { method = "GET", body, token, signal, etag = false } = options;
+    const { method = "GET", body, signal, etag = false } = options;
 
     const headers = new Headers({ Accept: "application/json" });
     if (body !== undefined) headers.set("Content-Type", "application/json");
-    if (token !== undefined) headers.set("Authorization", `Bearer ${token}`);
 
     const cached = etag ? etagCache.get(path) : undefined;
     if (cached !== undefined) headers.set("If-None-Match", cached.etag);

@@ -41,15 +41,8 @@ const databaseConfigSchema = z
         }
     });
 
-const jwtConfigSchema = z.object({
-    Secret: z.string().min(16, "JWT_SECRET must be at least 16 characters"),
-    ExpiresMinutes: z.coerce.number().int().positive(),
-});
-
 const rateLimitConfigSchema = z.object({
-    WindowMs: z.coerce.number().int().positive(),
-    Max: z.coerce.number().int().positive(),
-    // Manual refreshes hit GitHub, so they get their own tighter budget.
+    // Manual refreshes hit GitHub, so they get a tight budget per IP.
     RefreshWindowMs: z.coerce.number().int().positive(),
     RefreshMax: z.coerce.number().int().positive(),
 });
@@ -84,7 +77,6 @@ const logConfigSchema = z.object({
 export const configSchema = z.object({
     Database: databaseConfigSchema,
     Port: z.coerce.number().int().positive(),
-    Jwt: jwtConfigSchema,
     RateLimit: rateLimitConfigSchema,
     GitHub: githubConfigSchema,
     Score: scoreWeightsSchema,

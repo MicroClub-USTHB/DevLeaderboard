@@ -6,6 +6,13 @@ export interface LeaderboardSnapshotAttrs {
     /** Lowercased: GitHub org logins are case-insensitive and the API looks up by index. */
     orgLogin: string;
     period: Period;
+    /**
+     * `""` for the fixed periods; `YYYY-MM-DD_YYYY-MM-DD` for a custom range.
+     * Part of the unique key so any number of ranges can be cached per org.
+     */
+    rangeKey: string;
+    /** Cached so the UI can bound a custom range without calling GitHub. */
+    orgCreatedAt: Date;
     windowFrom: Date;
     windowTo: Date;
     generatedAt: Date;
@@ -36,6 +43,8 @@ const leaderboardSnapshotSchema = new mongoose.Schema<LeaderboardSnapshotAttrs>(
     {
         orgLogin: { type: String, required: true, lowercase: true, trim: true },
         period: { type: String, required: true, enum: PERIODS },
+        rangeKey: { type: String, required: true, default: "" },
+        orgCreatedAt: { type: Date, required: true },
         windowFrom: { type: Date, required: true },
         windowTo: { type: Date, required: true },
         generatedAt: { type: Date, required: true },
@@ -45,8 +54,11 @@ const leaderboardSnapshotSchema = new mongoose.Schema<LeaderboardSnapshotAttrs>(
     { timestamps: true },
 );
 
-// One snapshot per org+period: refreshes overwrite in place.
-leaderboardSnapshotSchema.index({ orgLogin: 1, period: 1 }, { unique: true });
+// One snapshot per org + period + range: refreshes overwrite in place.
+leaderboardSnapshotSchema.index(
+    { orgLogin: 1, period: 1, rangeKey: 1 },
+    { unique: true },
+);
 
 const LeaderboardSnapshot = mongoose.model<LeaderboardSnapshotAttrs>(
     "LeaderboardSnapshot",
@@ -55,9 +67,14 @@ const LeaderboardSnapshot = mongoose.model<LeaderboardSnapshotAttrs>(
 
 export const upsertSnapshot = async (input: SnapshotInput): Promise<void> => {
     await LeaderboardSnapshot.findOneAndUpdate(
-        { orgLogin: input.orgLogin.toLowerCase(), period: input.period },
+        {
+            orgLogin: input.orgLogin.toLowerCase(),
+            period: input.period,
+            rangeKey: input.rangeKey,
+        },
         {
             $set: {
+                orgCreatedAt: input.orgCreatedAt,
                 windowFrom: input.windowFrom,
                 windowTo: input.windowTo,
                 generatedAt: input.generatedAt,
@@ -72,30 +89,58 @@ export const upsertSnapshot = async (input: SnapshotInput): Promise<void> => {
 /** Lightweight projection used by the meta endpoint (no contributor payloads). */
 export interface SnapshotSummary {
     period: Period;
+    rangeKey: string;
+    orgCreatedAt: Date;
+    windowFrom: Date;
+    windowTo: Date;
     generatedAt: Date;
     entryCount: number;
 }
 
-/** Read path: a single org+period snapshot, lowercased for the unique index. */
+/** Read path: a single org+period+range snapshot, lowercased for the index. */
 export const findSnapshot = async (
     orgLogin: string,
     period: Period,
+    rangeKey: string,
 ): Promise<LeaderboardSnapshotAttrs | null> =>
     (await LeaderboardSnapshot.findOne({
         orgLogin: orgLogin.toLowerCase(),
         period,
+        rangeKey,
     }).lean()) as LeaderboardSnapshotAttrs | null;
 
-/** Read path: which periods an org has, and how fresh each one is. */
+/** Read path: which periods/ranges an org has, and how fresh each one is. */
 export const findSnapshotSummaries = async (orgLogin: string): Promise<SnapshotSummary[]> =>
     LeaderboardSnapshot.aggregate<SnapshotSummary>([
-        { $match: { orgLogin: orgLogin.toLowerCase() } },
+        { $match: { orgLogin: orgLogin.toLowerCase(), period: { $in: [...PERIODS] } } },
         {
             $project: {
                 _id: 0,
                 period: 1,
+                rangeKey: 1,
+                orgCreatedAt: 1,
+                windowFrom: 1,
+                windowTo: 1,
                 generatedAt: 1,
                 entryCount: { $size: { $ifNull: ["$contributors", []] } },
             },
         },
+        { $sort: { period: 1, windowFrom: 1 } },
     ]);
+
+/**
+ * One-time cleanup for databases created before periods became
+ * `month | all | custom`. Old snapshots are pure caches, so dropping them is
+ * safe; the next refresh repopulates the new periods.
+ */
+export const migrateLeaderboardSnapshots = async (): Promise<number> => {
+    const { deletedCount } = await LeaderboardSnapshot.deleteMany({
+        period: { $nin: [...PERIODS] },
+    });
+    await LeaderboardSnapshot.updateMany(
+        { rangeKey: { $exists: false } },
+        { $set: { rangeKey: "" } },
+    );
+    await LeaderboardSnapshot.syncIndexes();
+    return deletedCount ?? 0;
+};

@@ -1,4 +1,4 @@
-import type { Period } from "./periods.js";
+import type { Period, TimeWindow } from "./periods.js";
 
 /** Weight applied to each metric when computing `score`. */
 export interface ScoreWeights {
@@ -28,6 +28,10 @@ export interface LeaderboardEntry extends RawContributor {
 export interface CollectResult {
     contributors: RawContributor[];
     warnings: string[];
+    /** The full requested window (before yearly chunking). */
+    window: TimeWindow;
+    /** Organization creation date, stored with every snapshot. */
+    orgCreatedAt: Date;
 }
 
 export interface SnapshotContributor {
@@ -45,7 +49,13 @@ export interface SnapshotContributor {
 export interface SyncResult {
     orgLogin: string;
     period: Period;
+    /** `""` for fixed periods, `YYYY-MM-DD_YYYY-MM-DD` for custom. */
+    rangeKey: string;
     generatedAt: Date;
+    windowFrom: Date;
+    windowTo: Date;
     entryCount: number;
     warnings: string[];
+    /** True when the cached snapshot was still fresh and GitHub was not called. */
+    skipped: boolean;
 }

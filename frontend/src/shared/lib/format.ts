@@ -3,6 +3,18 @@
 /** 1234567 → "1,234,567" (en-US keeps columns stable and readable). */
 export const formatNumber = (value: number): string => new Intl.NumberFormat("en-US").format(value);
 
+/** Full timestamp → "Nov 21, 2026" (no time). */
+export const formatDate = (iso: string): string => {
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return "unknown";
+
+    return new Intl.DateTimeFormat("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+    }).format(date);
+};
+
 /** Full timestamp → "Nov 14, 2026, 10:23". */
 export const formatDateTime = (iso: string): string => {
     const date = new Date(iso);

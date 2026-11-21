@@ -13,9 +13,12 @@ const BOT_DENYLIST: ReadonlySet<string> = new Set([
     "sonarcloud",
     "imgbot",
     "allcontributors",
+    "copilot",
+    "copilot-swe-agent",
+    "github-copilot",
 ]);
 
-const isBotLogin = (login: string): boolean => {
+export const isBotLogin = (login: string): boolean => {
     const normalized = login.toLowerCase();
     return (
         normalized.endsWith("[bot]") ||
@@ -89,6 +92,15 @@ export const aggregate = (contributors: RawContributor[], weights: ScoreWeights)
 
     const entries: LeaderboardEntry[] = [];
     for (const contributor of merged.values()) {
+        // A leaderboard ranks contributors; listing every known member with a
+        // zero score buries the people who actually shipped.
+        if (
+            contributor.commits + contributor.pullRequests + contributor.reviews + contributor.issues ===
+            0
+        ) {
+            continue;
+        }
+
         entries.push({
             ...contributor,
             score: scoreOf(contributor, weights),

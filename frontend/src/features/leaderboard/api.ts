@@ -1,117 +1,152 @@
-import { useMutation, useQuery, useQueryClient, type UseMutationOptions } from "@tanstack/react-query";
-import { useLocation, useNavigate } from "react-router-dom";
-import { request, ApiError } from "@/shared/api/client";
-import type { LeaderboardMeta, LeaderboardResult, Period, RefreshResponse } from "@/shared/api/types";
-import { useAuth } from "@/features/auth/authContext";
-import { useToast } from "@/shared/ui/toastContext";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { request, type ApiError } from "@/shared/api/client";
+import {
+    hasSnapshot,
+    type LeaderboardMeta,
+    type LeaderboardResult,
+    type Period,
+    type RefreshResponse,
+} from "@/shared/api/types";
 import { formatRetryDelay } from "@/shared/lib/format";
+import { useToast } from "@/shared/ui/toastContext";
+import { PERIOD_LABELS } from "./constants";
 
 export interface LeaderboardParams {
     org: string;
     period: Period;
     limit: number;
+    /** Only meaningful for `period: "custom"`. */
+    from?: string;
+    to?: string;
+}
+
+/** What to refresh; omitting the period refreshes the backend's scheduled set. */
+export interface RefreshTarget {
+    period?: Period;
+    from?: string;
+    to?: string;
 }
 
 /** 429/5xx must not silently replace a good cached snapshot with an error. */
 const shouldRetry = (failureCount: number, error: unknown): boolean => {
-    const status = error instanceof Error && "status" in error ? (error as { status: number }).status : 0;
+    const status =
+        error instanceof Error && "status" in error ? (error as { status: number }).status : 0;
     // Network failures (0) and 5xx are worth one retry; 4xx are deterministic.
     if (status === 0 || status >= 500) return failureCount < 1;
     return false;
 };
 
+/** A custom range is its own cache entry; fixed periods share one per org. */
+const rangeKeyOf = (params: LeaderboardParams): string =>
+    params.period === "custom" && params.from !== undefined && params.to !== undefined
+        ? `${params.from}_${params.to}`
+        : "";
+
 const leaderboardKey = (params: LeaderboardParams): readonly unknown[] => [
     "leaderboard",
-    params.org,
+    params.org.toLowerCase(),
     params.period,
+    rangeKeyOf(params),
     params.limit,
 ];
 
-/** Snapshot for one org+period — served from Mongo, never from GitHub. */
+const buildQuery = (params: LeaderboardParams): string => {
+    const query = new URLSearchParams({
+        period: params.period,
+        limit: String(params.limit),
+    });
+
+    if (params.period === "custom" && params.from !== undefined && params.to !== undefined) {
+        query.set("from", params.from);
+        query.set("to", params.to);
+    }
+
+    return query.toString();
+};
+
+/**
+ * Snapshot for one org+period — served from Mongo, never from GitHub.
+ *
+ * A 202 means the server has no snapshot yet, so the query polls until the
+ * first refresh (triggered by the page) writes one.
+ */
 export const useLeaderboard = (params: LeaderboardParams) =>
     useQuery<LeaderboardResult>({
         queryKey: leaderboardKey(params),
         queryFn: () =>
             request<LeaderboardResult>(
-                `/leaderboard/${encodeURIComponent(params.org)}?period=${params.period}&limit=${params.limit}`,
+                `/leaderboard/${encodeURIComponent(params.org)}?${buildQuery(params)}`,
                 { etag: true },
             ),
         retry: shouldRetry,
-        // A 202 "no snapshot yet" is a valid, stable answer — don't refetch it.
         staleTime: 15_000,
+        refetchInterval: (query) => {
+            const data = query.state.data;
+            return data !== undefined && !hasSnapshot(data) ? 4_000 : false;
+        },
     });
 
 /** Weights, GitHub quota and snapshot freshness for the meta panel. */
 export const useLeaderboardMeta = (org: string) =>
     useQuery<LeaderboardMeta>({
-        queryKey: ["leaderboard-meta", org],
+        queryKey: ["leaderboard-meta", org.toLowerCase()],
         queryFn: () => request<LeaderboardMeta>(`/leaderboard/${encodeURIComponent(org)}/meta`),
         staleTime: 30_000,
         retry: shouldRetry,
     });
 
 /**
- * Triggers a GitHub re-sync. Costs quota and is rate-limited server-side, so
- * every outcome is surfaced as a toast and a successful run invalidates the
- * affected queries so the table re-renders with fresh data.
- *
- * @param period omit to refresh all three periods (the backend's default).
+ * Triggers a GitHub re-sync. Always sends `force=1`: an explicit refresh must
+ * recompute instead of returning the cached snapshot. Costs quota and is
+ * rate-limited server-side, so every outcome is surfaced as a toast.
  */
 export const useRefresh = (org: string) => {
     const queryClient = useQueryClient();
-    const { token, logout } = useAuth();
     const pushToast = useToast();
-    const navigate = useNavigate();
-    const location = useLocation();
 
-    const options: UseMutationOptions<RefreshResponse, ApiError, Period | undefined, unknown> = {
-        mutationFn: async (period: Period | undefined) =>
-            request<RefreshResponse>(
-                `/leaderboard/${encodeURIComponent(org)}/refresh${
-                    period === undefined ? "" : `?period=${period}`
-                }`,
-                { method: "POST", token: token ?? undefined },
-            ),
-        onSuccess: (response) => {
-            // The snapshots changed: mark the org's leaderboards stale so the
-            // visible table refetches immediately (other periods refetch when
-            // opened). The ETag cookie is keyed by path and carries
-            // `generatedAt`, so the old validator can never answer 304 here.
-            void queryClient.invalidateQueries({ queryKey: ["leaderboard", org] });
-            void queryClient.invalidateQueries({ queryKey: ["leaderboard-meta", org] });
+    return useMutation<RefreshResponse, ApiError, RefreshTarget | undefined>({
+        mutationFn: async (target) => {
+            const query = new URLSearchParams({ force: "1" });
 
-            const periods = response.results.map((result) => result.period).join(", ");
-            pushToast(`Refreshed ${periods} for ${response.org}.`, "success");
-        },
-        onError: (error) => {
-            // Read once so narrowing inside branches can't invalidate the rest.
-            const status: number = error.status;
-            const retryAfterSeconds: number | null = error.retryAfterSeconds;
-            const message: string = error.message;
-
-            // Token rejected: the session is over, so end it and offer a way back.
-            if (status === 401) {
-                logout();
-                pushToast("Your session expired. Please sign in again.", "error");
-                navigate("/login", { replace: true, state: { from: location.pathname } });
-                return;
+            if (target?.period !== undefined) {
+                query.set("period", target.period);
+                if (target.period === "custom") {
+                    if (target.from !== undefined) query.set("from", target.from);
+                    if (target.to !== undefined) query.set("to", target.to);
+                }
             }
 
-            if (status === 429) {
+            return request<RefreshResponse>(
+                `/leaderboard/${encodeURIComponent(org)}/refresh?${query.toString()}`,
+                { method: "POST" },
+            );
+        },
+        onSuccess: (response) => {
+            // Snapshots changed: refetch the visible period and the meta panel.
+            void queryClient.invalidateQueries({
+                queryKey: ["leaderboard", org.toLowerCase()],
+            });
+            void queryClient.invalidateQueries({
+                queryKey: ["leaderboard-meta", org.toLowerCase()],
+            });
+
+            const labels = response.results
+                .map((result) => PERIOD_LABELS[result.period])
+                .join(", ");
+            pushToast(`Updated ${labels.toLowerCase()} for ${response.org}.`, "success");
+        },
+        onError: (error) => {
+            if (error.status === 429) {
                 pushToast(
-                    retryAfterSeconds === null
+                    error.retryAfterSeconds === null
                         ? "Too many refreshes. Please wait a moment and try again."
-                        : `Too many refreshes. Try again in ${formatRetryDelay(retryAfterSeconds)}.`,
+                        : `Too many refreshes. Try again in ${formatRetryDelay(error.retryAfterSeconds)}.`,
                     "error",
                 );
                 return;
             }
 
-            pushToast(message, "error");
+            pushToast(error.message, "error");
         },
-    };
-
-    const refreshMutation = useMutation(options);
-
-    return refreshMutation;
+    });
 };

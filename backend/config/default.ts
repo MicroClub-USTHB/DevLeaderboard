@@ -6,9 +6,6 @@ export const defaults = {
     DATABASE_PASSWORD: "",
     DATABASE_NAME: "devleaderboard",
     PORT: 3000,
-    JWT_EXPIRES_MINUTES: 60,
-    RATE_LIMIT_WINDOW_MS: 15 * 60 * 1000,
-    RATE_LIMIT_MAX: 100,
     RATE_LIMIT_REFRESH_WINDOW_MS: 15 * 60 * 1000,
     RATE_LIMIT_REFRESH_MAX: 10,
     GITHUB_API_URL: "https://api.github.com",
@@ -18,5 +15,8 @@ export const defaults = {
     SCORE_REVIEW: 3,
     SCORE_ISSUE: 2,
     LEADERBOARD_CRON: "0 */6 * * *",
+    // The org the site opens on. Override with LEADERBOARD_ORGS, or set it to
+    // an empty string to disable the scheduler.
+    LEADERBOARD_ORGS: "MicroClub-USTHB",
     LOG_LEVEL: "info",
 } as const;

@@ -6,7 +6,6 @@ import {
     getLeaderboardMeta,
     refreshLeaderboard,
 } from "../controllers/leaderboardCtrl.js";
-import { requireAuth } from "../middleware/requireAuth.js";
 
 const router = express.Router();
 
@@ -22,6 +21,6 @@ const refreshLimiter = rateLimit({
 
 router.get("/:org/meta", getLeaderboardMeta);
 router.get("/:org", getLeaderboard);
-router.post("/:org/refresh", refreshLimiter, requireAuth, refreshLeaderboard);
+router.post("/:org/refresh", refreshLimiter, refreshLeaderboard);
 
 export default router;

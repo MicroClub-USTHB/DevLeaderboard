@@ -32,14 +32,7 @@ function loadConfig(): Config {
             Name: process.env.DATABASE_NAME ?? defaults.DATABASE_NAME,
         },
         Port: process.env.PORT ?? defaults.PORT,
-        Jwt: {
-            // No default on purpose: the app must refuse to boot without a secret.
-            Secret: process.env.JWT_SECRET ?? "",
-            ExpiresMinutes: process.env.JWT_EXPIRES_MINUTES ?? defaults.JWT_EXPIRES_MINUTES,
-        },
         RateLimit: {
-            WindowMs: process.env.RATE_LIMIT_WINDOW_MS ?? defaults.RATE_LIMIT_WINDOW_MS,
-            Max: process.env.RATE_LIMIT_MAX ?? defaults.RATE_LIMIT_MAX,
             RefreshWindowMs:
                 process.env.RATE_LIMIT_REFRESH_WINDOW_MS ?? defaults.RATE_LIMIT_REFRESH_WINDOW_MS,
             RefreshMax: process.env.RATE_LIMIT_REFRESH_MAX ?? defaults.RATE_LIMIT_REFRESH_MAX,
@@ -57,7 +50,9 @@ function loadConfig(): Config {
         },
         Leaderboard: {
             Schedule: process.env.LEADERBOARD_CRON ?? defaults.LEADERBOARD_CRON,
-            Orgs: (process.env.LEADERBOARD_ORGS ?? "")
+            // An unset variable uses the default org; an explicitly empty one
+            // disables the scheduler.
+            Orgs: (process.env.LEADERBOARD_ORGS ?? defaults.LEADERBOARD_ORGS)
                 .split(",")
                 .map((entry) => entry.trim())
                 .filter((entry) => entry.length > 0),

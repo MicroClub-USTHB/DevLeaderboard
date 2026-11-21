@@ -6,9 +6,9 @@
  * Every field here has been verified against a live backend response.
  */
 
-export type Period = "7d" | "30d" | "year";
+export type Period = "month" | "all" | "custom";
 
-export const PERIODS: readonly Period[] = ["7d", "30d", "year"] as const;
+export const PERIODS: readonly Period[] = ["month", "all", "custom"] as const;
 
 /** One ranked contributor as stored in a snapshot. */
 export interface LeaderboardEntry {
@@ -27,6 +27,8 @@ export interface LeaderboardEntry {
 export interface LeaderboardSnapshot {
     org: string;
     period: Period;
+    /** `""` for fixed periods; `YYYY-MM-DD_YYYY-MM-DD` for a custom range. */
+    rangeKey: string;
     generatedAt: string;
     windowFrom: string;
     windowTo: string;
@@ -40,6 +42,7 @@ export interface LeaderboardSnapshot {
 export interface NoSnapshotYet {
     org: string;
     period: Period;
+    rangeKey: string;
     message: string;
 }
 
@@ -66,6 +69,10 @@ export interface RateLimitInfo {
 
 export interface SnapshotSummary {
     period: Period;
+    rangeKey: string;
+    orgCreatedAt: string;
+    windowFrom: string;
+    windowTo: string;
     generatedAt: string;
     entryCount: number;
 }
@@ -73,6 +80,7 @@ export interface SnapshotSummary {
 /** GET /leaderboard/:org/meta */
 export interface LeaderboardMeta {
     org: string;
+    orgCreatedAt: string | null;
     scoreWeights: ScoreWeights;
     rateLimit: RateLimitInfo | null;
     snapshots: SnapshotSummary[];
@@ -82,29 +90,20 @@ export interface LeaderboardMeta {
 export interface SyncResult {
     orgLogin: string;
     period: Period;
+    rangeKey: string;
     generatedAt: string;
+    windowFrom: string;
+    windowTo: string;
     entryCount: number;
     warnings: string[];
+    /** True when a fresh cached snapshot was served without calling GitHub. */
+    skipped: boolean;
 }
 
 /** POST /leaderboard/:org/refresh */
 export interface RefreshResponse {
     org: string;
     results: SyncResult[];
-}
-
-export interface PublicUser {
-    id: string;
-    name: string;
-    email: string;
-    image: string;
-}
-
-/** POST /auth/register and POST /auth/login */
-export interface AuthResponse {
-    message: string;
-    user: PublicUser;
-    token: string;
 }
 
 /** Field-level validation issue attached to a 400. */
