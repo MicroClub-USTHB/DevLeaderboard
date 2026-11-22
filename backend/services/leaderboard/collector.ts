@@ -128,6 +128,8 @@ interface OutsideCollaboratorRest {
 interface RepoRest {
     full_name: string;
     fork: boolean;
+    private: boolean;
+    default_branch: string;
 }
 
 /** What GraphQL actually sends over the wire for a connection field. */
@@ -146,6 +148,8 @@ const asItemsPage = <T>(page: NodesPage<T>): GraphqlPage<T> => ({
 export interface CollectorClient {
     graphql: <T>(query: string, variables?: Record<string, unknown>) => Promise<T>;
     paginateRest: <T>(path: string) => AsyncGenerator<T, void, undefined>;
+    /** Optional so existing fakes stay valid; absent means "no scope header". */
+    getScopes?: () => Promise<string[] | undefined>;
 }
 
 /** Which API produced the member list — surfaced only in logs. */
@@ -157,6 +161,8 @@ interface OrgWithMembers {
     createdAt: Date;
     members: UserNode[];
     memberSource: MemberSource;
+    /** Every repository the token can see, forks included. */
+    repos: RepoRest[];
 }
 
 const requireOrg = <T>(organization: T | null | undefined, orgLogin: string): T => {
@@ -178,6 +184,16 @@ const isPermissionError = (error: unknown): boolean =>
         error.type === "FORBIDDEN" ||
         error.type === "INSUFFICIENT_SCOPES" ||
         /not accessible|must be an owner|not have permission/i.test(error.message));
+
+/**
+ * A repository that cannot be read (permission, missing, or empty) is safe to
+ * skip. Rate limits, network failures and 5xx must fail the refresh so the
+ * previous snapshot stays on screen instead of being replaced by a partial one.
+ */
+const isSkippableRepoError = (error: unknown): boolean =>
+    error instanceof GitHubError &&
+    (error.status === 403 || error.status === 404 || error.status === 409) &&
+    error.rateLimit?.remaining !== 0;
 
 const fetchOrgIdentity = async (
     orgLogin: string,
@@ -237,17 +253,32 @@ const fetchPublicMembers = async (
 };
 
 /**
+ * Every repository the token can see, private ones included. A forbidden or
+ * missing repository list degrades to an empty list; rate limits and network
+ * failures propagate so a partial snapshot is never cached.
+ */
+const fetchOrgRepos = async (
+    orgLogin: string,
+    client: CollectorClient,
+): Promise<RepoRest[]> => {
+    const reposPath = `/orgs/${encodeURIComponent(orgLogin)}/repos?per_page=100&type=all`;
+    try {
+        return await drain(client.paginateRest<RepoRest>(reposPath));
+    } catch (error) {
+        if (isSkippableRepoError(error)) return [];
+        throw error;
+    }
+};
+
+/**
  * Contributors of every repository in the org. Without `read:org` this is the
  * most complete contributor list available: it includes people whose org
  * membership is private, which the public member list misses entirely.
  */
 const fetchRepoContributors = async (
-    orgLogin: string,
+    repos: RepoRest[],
     client: CollectorClient,
 ): Promise<UserNode[]> => {
-    const reposPath = `/orgs/${encodeURIComponent(orgLogin)}/repos?per_page=100&type=all`;
-    const repos = await drain(client.paginateRest<RepoRest>(reposPath));
-
     // Forks are copies of someone else's history; their contributors are not
     // necessarily contributors to this organization.
     const sources = repos.filter((repo) => !repo.fork);
@@ -256,9 +287,10 @@ const fetchRepoContributors = async (
         try {
             const path = `/repos/${repo.full_name}/contributors?per_page=100`;
             return await drain(client.paginateRest<OutsideCollaboratorRest>(path));
-        } catch {
+        } catch (error) {
             // One inaccessible or empty repository must not fail the whole run.
-            return [];
+            if (isSkippableRepoError(error)) return [];
+            throw error;
         }
     });
 
@@ -291,15 +323,10 @@ const fetchOrgWithMembers = async (
     orgLogin: string,
     client: CollectorClient,
 ): Promise<OrgWithMembers> => {
+    let memberResult: { org: OrgNode; members: UserNode[] };
+
     try {
-        const { org, members } = await fetchMembersWithRole(orgLogin, client);
-        return {
-            id: org.id,
-            login: org.login,
-            createdAt: toOrgDate(org.createdAt, orgLogin),
-            members,
-            memberSource: "membersWithRole",
-        };
+        memberResult = await fetchMembersWithRole(orgLogin, client);
     } catch (error) {
         if (!isPermissionError(error)) throw error;
 
@@ -307,10 +334,11 @@ const fetchOrgWithMembers = async (
         // public profile, the public member list and every public repository.
         // Union both sources so private members are not silently dropped.
         const org = await fetchOrgIdentity(orgLogin, client);
-        const [publicMembers, repoContributors] = await Promise.all([
+        const [publicMembers, repos] = await Promise.all([
             fetchPublicMembers(orgLogin, client),
-            fetchRepoContributors(orgLogin, client),
+            fetchOrgRepos(orgLogin, client),
         ]);
+        const repoContributors = await fetchRepoContributors(repos, client);
 
         return {
             id: org.id,
@@ -318,8 +346,29 @@ const fetchOrgWithMembers = async (
             createdAt: toOrgDate(org.createdAt, orgLogin),
             members: [...publicMembers, ...repoContributors],
             memberSource: "fallback",
+            repos,
         };
     }
+
+    const { org, members } = memberResult;
+    const repos = await fetchOrgRepos(orgLogin, client);
+
+    // The member list alone is not enough: someone can contribute to an
+    // organization repository without being a member or an outside
+    // collaborator (a one-off PR, a drive-by commit, a bot-owned account).
+    // Unioning repository contributors closes that gap for every token,
+    // not just the permission-limited fallback above. Private repositories
+    // are included automatically when the token can see them.
+    const repoContributors = await fetchRepoContributors(repos, client);
+
+    return {
+        id: org.id,
+        login: org.login,
+        createdAt: toOrgDate(org.createdAt, orgLogin),
+        members: [...members, ...repoContributors],
+        memberSource: "membersWithRole",
+        repos,
+    };
 };
 
 /**
@@ -332,6 +381,240 @@ const isUnresolvableUser = (error: unknown): boolean =>
     (error.status === 404 ||
         error.type === "NOT_FOUND" ||
         /could not resolve to a user/i.test(error.message));
+
+/** Private repositories are scanned with bounded parallelism, like public ones. */
+const PRIVATE_REPO_CONCURRENCY = 3;
+
+/**
+ * Review counting costs one request per PR, so cap it. PR/issue/commit counts
+ * are unaffected; only the review scan of very busy private repositories is
+ * bounded.
+ */
+const MAX_REVIEW_PRS_PER_REPO = 500;
+
+/** Activity discovered by reading a private repository directly. */
+interface PrivateActivity {
+    user: UserNode;
+    commits: number;
+    pullRequests: number;
+    reviews: number;
+    issues: number;
+}
+
+interface RestUser {
+    login: string;
+    id: number;
+    node_id?: string;
+    avatar_url?: string;
+}
+
+interface CommitRest {
+    author: RestUser | null;
+}
+
+interface PullRest {
+    number: number;
+    user: RestUser | null;
+    created_at: string;
+    updated_at: string;
+}
+
+interface ReviewRest {
+    user: RestUser | null;
+    submitted_at: string | null;
+}
+
+interface IssueRest {
+    user: RestUser | null;
+    created_at: string;
+    pull_request?: unknown;
+}
+
+const toRestUser = (user: RestUser | null): UserNode | undefined => {
+    if (user === null || user.login.length === 0) return undefined;
+    return {
+        id: user.node_id ?? String(user.id),
+        login: user.login,
+        avatarUrl: user.avatar_url ?? "",
+    };
+};
+
+const activityFor = (
+    activity: Map<string, PrivateActivity>,
+    user: UserNode,
+): PrivateActivity => {
+    const key = user.login.toLowerCase();
+    const existing = activity.get(key);
+    if (existing !== undefined) return existing;
+
+    const created: PrivateActivity = {
+        user,
+        commits: 0,
+        pullRequests: 0,
+        reviews: 0,
+        issues: 0,
+    };
+    activity.set(key, created);
+    return created;
+};
+
+const timeOf = (value: string): number => Date.parse(value);
+
+/**
+ * Counts one private repository's activity in the window. Mirrors the
+ * definitions of GitHub's `contributionsCollection`: commits on the default
+ * branch, PRs opened, issues opened, and one review per person per PR.
+ */
+const countPrivateRepoActivity = async (
+    repo: RepoRest,
+    window: TimeWindow,
+    client: CollectorClient,
+    activity: Map<string, PrivateActivity>,
+): Promise<void> => {
+    const from = window.from.getTime();
+    const to = window.to.getTime();
+    const fromIso = window.from.toISOString();
+    const toIso = window.to.toISOString();
+
+    // Commits on the default branch, restricted to the window by the API.
+    const commitsPath = `/repos/${repo.full_name}/commits?since=${encodeURIComponent(
+        fromIso,
+    )}&until=${encodeURIComponent(toIso)}&per_page=100`;
+    for await (const commit of client.paginateRest<CommitRest>(commitsPath)) {
+        const user = toRestUser(commit.author);
+        if (user === undefined) continue;
+        activityFor(activity, user).commits += 1;
+    }
+
+    // PRs updated in the window. A PR opened in the window is necessarily
+    // updated in it too, so one listing covers both PR counts and reviews.
+    const pullsPath = `/repos/${repo.full_name}/pulls?state=all&sort=updated&direction=desc&per_page=100`;
+    let reviewScans = 0;
+    for await (const pull of client.paginateRest<PullRest>(pullsPath)) {
+        if (timeOf(pull.updated_at) < from) break;
+
+        const createdAt = timeOf(pull.created_at);
+        if (createdAt >= from && createdAt <= to) {
+            const author = toRestUser(pull.user);
+            if (author !== undefined) activityFor(activity, author).pullRequests += 1;
+        }
+
+        if (reviewScans >= MAX_REVIEW_PRS_PER_REPO) continue;
+        reviewScans += 1;
+
+        const reviewsPath = `/repos/${repo.full_name}/pulls/${pull.number}/reviews?per_page=100`;
+        const reviewers = new Set<string>();
+        for await (const review of client.paginateRest<ReviewRest>(reviewsPath)) {
+            if (review.submitted_at === null) continue;
+            const submittedAt = timeOf(review.submitted_at);
+            if (submittedAt < from || submittedAt > to) continue;
+
+            const reviewer = toRestUser(review.user);
+            if (reviewer === undefined) continue;
+            reviewers.add(reviewer.login.toLowerCase());
+            activityFor(activity, reviewer);
+        }
+
+        // GraphQL counts a review contribution once per person per PR.
+        for (const login of reviewers) {
+            const entry = activity.get(login);
+            if (entry !== undefined) entry.reviews += 1;
+        }
+    }
+
+    // Issues opened in the window. This endpoint also returns pull requests.
+    const issuesPath = `/repos/${repo.full_name}/issues?state=all&sort=created&direction=desc&per_page=100`;
+    for await (const issue of client.paginateRest<IssueRest>(issuesPath)) {
+        if (timeOf(issue.created_at) < from) break;
+        if (issue.pull_request !== undefined) continue;
+        if (timeOf(issue.created_at) > to) continue;
+
+        const author = toRestUser(issue.user);
+        if (author === undefined) continue;
+        activityFor(activity, author).issues += 1;
+    }
+};
+
+/** True when the token's scope lets GraphQL include private contributions. */
+const privateContributionsAreVisible = async (client: CollectorClient): Promise<boolean> => {
+    if (client.getScopes === undefined) return false;
+    try {
+        const scopes = await client.getScopes();
+        return scopes?.includes("read:user") ?? false;
+    } catch {
+        return false;
+    }
+};
+
+const collectPrivateActivity = async (
+    repos: RepoRest[],
+    window: TimeWindow,
+    client: CollectorClient,
+): Promise<Map<string, PrivateActivity>> => {
+    const perRepo = await mapWithConcurrency(repos, PRIVATE_REPO_CONCURRENCY, async (repo) => {
+        const activity = new Map<string, PrivateActivity>();
+        try {
+            await countPrivateRepoActivity(repo, window, client, activity);
+        } catch (error) {
+            // One unreadable private repository must not fail the whole run.
+            if (!isSkippableRepoError(error)) throw error;
+        }
+        return activity;
+    });
+
+    const merged = new Map<string, PrivateActivity>();
+    for (const activity of perRepo) {
+        for (const [login, counts] of activity) {
+            const existing = merged.get(login);
+            if (existing === undefined) {
+                merged.set(login, { ...counts });
+                continue;
+            }
+            existing.commits += counts.commits;
+            existing.pullRequests += counts.pullRequests;
+            existing.reviews += counts.reviews;
+            existing.issues += counts.issues;
+        }
+    }
+    return merged;
+};
+
+/**
+ * Adds private-repository counts to the GraphQL totals. Merging is by login
+ * because direct REST reads do not share GraphQL's node-id key for every
+ * contributor (for example, issue authors who never committed).
+ */
+const mergePrivateActivity = (
+    contributors: RawContributor[],
+    activity: Map<string, PrivateActivity>,
+): RawContributor[] => {
+    const byLogin = new Map(contributors.map((entry) => [entry.login.toLowerCase(), entry]));
+
+    for (const [login, counts] of activity) {
+        const existing = byLogin.get(login);
+        if (existing !== undefined) {
+            existing.commits += counts.commits;
+            existing.pullRequests += counts.pullRequests;
+            existing.reviews += counts.reviews;
+            existing.issues += counts.issues;
+            continue;
+        }
+
+        const created: RawContributor = {
+            key: counts.user.id,
+            login: counts.user.login,
+            avatarUrl: counts.user.avatarUrl,
+            commits: counts.commits,
+            pullRequests: counts.pullRequests,
+            reviews: counts.reviews,
+            issues: counts.issues,
+        };
+        byLogin.set(login, created);
+        contributors.push(created);
+    }
+
+    return contributors;
+};
 
 interface BatchResult {
     user: BatchUser | null;
@@ -488,8 +771,19 @@ export const collectContributions = async (
         },
     );
 
+    let contributors = batchContributors.flat();
+
+    // GitHub's contribution graph omits private activity unless the token has
+    // `read:user`. When private repositories are visible but that scope is
+    // missing, read them directly so private work is still ranked.
+    const privateRepos = org.repos.filter((repo) => repo.private && !repo.fork);
+    if (privateRepos.length > 0 && !(await privateContributionsAreVisible(client))) {
+        const privateActivity = await collectPrivateActivity(privateRepos, window, client);
+        contributors = mergePrivateActivity(contributors, privateActivity);
+    }
+
     return {
-        contributors: batchContributors.flat(),
+        contributors,
         warnings,
         window,
         orgCreatedAt: org.createdAt,

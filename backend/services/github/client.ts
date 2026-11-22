@@ -263,9 +263,28 @@ export const createGitHubClient = (options: RestClientOptions): GitHubClient => 
         }
     }
 
+    /**
+     * Classic PATs advertise their scopes on every response. Fine-grained
+     * tokens do not, which is how the collector tells whether private
+     * contributions can be trusted to appear in `contributionsCollection`.
+     */
+    const getScopes = async (): Promise<string[] | undefined> => {
+        const response = await rawRequest(`${apiUrl}/`, { method: "GET" });
+        await response.body?.cancel().catch(() => undefined);
+
+        const header = response.headers.get("x-oauth-scopes");
+        if (header === null) return undefined;
+
+        return header
+            .split(",")
+            .map((scope) => scope.trim())
+            .filter((scope) => scope.length > 0);
+    };
+
     return {
         graphql,
         paginateRest,
         getRateLimit: () => (rateLimit === undefined ? undefined : { ...rateLimit }),
+        getScopes,
     };
 };

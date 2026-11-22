@@ -40,4 +40,9 @@ export interface GitHubClient {
     /** Walks a paginated REST collection (Link header) yielding every item. */
     paginateRest: <T>(path: string) => AsyncGenerator<T, void, undefined>;
     getRateLimit: () => RateLimitInfo | undefined;
+    /**
+     * OAuth scopes reported by `GET /`. Classic tokens return a list;
+     * fine-grained tokens send no scope header, so this resolves to undefined.
+     */
+    getScopes: () => Promise<string[] | undefined>;
 }

@@ -74,9 +74,9 @@ export const LeaderboardPage = (): ReactNode => {
     const refresh = useRefresh(org);
 
     // Identifies "this org + period + range", so an auto-refresh never fires
-    // twice for the same timeline selection. A ref may only be touched inside
-    // effects or event handlers, never read during render.
-    const requestKey = `${period}:${rangeFrom ?? ""}:${rangeTo ?? ""}`;
+    // twice for the same selection and never leaks across org switches. A ref
+    // may only be touched inside effects or event handlers, never during render.
+    const requestKey = `${org.toLowerCase()}:${period}:${rangeFrom ?? ""}:${rangeTo ?? ""}`;
     const autoRefreshRef = useRef<string | null>(null);
 
     const handleRefresh = (): void => {
@@ -122,7 +122,16 @@ export const LeaderboardPage = (): ReactNode => {
 
     const retry = (): void => void leaderboard.refetch();
     const selectorRange = customRange ?? defaultCustomRange();
-    const refreshFailed = refresh.isError;
+
+    // Only surface a refresh failure for the selection that actually failed;
+    // TanStack keeps `isError` until the next mutation starts.
+    const failedVariables = refresh.variables;
+    const refreshFailed =
+        refresh.isError &&
+        failedVariables !== undefined &&
+        `${org.toLowerCase()}:${failedVariables.period ?? ""}:${failedVariables.from ?? ""}:${
+            failedVariables.to ?? ""
+        }` === requestKey;
 
     return (
         <div className="space-y-6">

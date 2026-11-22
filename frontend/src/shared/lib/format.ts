@@ -3,7 +3,7 @@
 /** 1234567 → "1,234,567" (en-US keeps columns stable and readable). */
 export const formatNumber = (value: number): string => new Intl.NumberFormat("en-US").format(value);
 
-/** Full timestamp → "Nov 21, 2026" (no time). */
+/** Full timestamp → "Nov 21, 2026" in UTC (leaderboard windows are UTC). */
 export const formatDate = (iso: string): string => {
     const date = new Date(iso);
     if (Number.isNaN(date.getTime())) return "unknown";
@@ -12,6 +12,7 @@ export const formatDate = (iso: string): string => {
         month: "short",
         day: "numeric",
         year: "numeric",
+        timeZone: "UTC",
     }).format(date);
 };
 

@@ -4,6 +4,9 @@ A GitHub organization leaderboard. It collects contribution activity for every m
 organization across **all of its repositories**, ranks them with a composite score, caches the
 result in MongoDB, and serves it through a small HTTP API. The read path never talks to GitHub.
 
+The site opens directly on **`MicroClub-USTHB`** at `/leaderboard/MicroClub-USTHB` — no login,
+no setup screen. Any other organization can still be opened with the header switcher.
+
 The repo contains both halves of the product:
 
 | Folder | What it is |
@@ -13,35 +16,42 @@ The repo contains both halves of the product:
 
 ## What the app does
 
-- **Search any organization** and open its leaderboard at `/leaderboard/:org`.
-- **Three windows** — last 7 days, last 30 days, or the current year — switchable in the URL
-  (`?period=7d|30d|year`) so every view is shareable and bookmarkable.
+- **Opens on the club leaderboard.** `/` redirects to `/leaderboard/MicroClub-USTHB`; the header
+  has a compact switcher for any other GitHub organization.
+- **Three timeline options** — **This month** (1st of the month, 00:00 UTC → now), **All time**
+  (organization creation → now), and a **custom range** picked with From/To date inputs. The
+  selection lives in the URL (`?period=month|all|custom&from=YYYY-MM-DD&to=YYYY-MM-DD`) so every
+  view is shareable and bookmarkable.
+- **No authentication.** Reads and refreshes are public. Refreshes are rate-limited per IP because
+  they spend GitHub quota.
 - **Desktop table and mobile cards** with rank, commits, pull requests, reviews, issues and the
   weighted score.
+- **Automatic first snapshot.** If a period has never been collected, the page gets a `202`, starts
+  the refresh itself, and polls until the snapshot lands.
+- **Caching with an explicit escape hatch.** The server serves `month` snapshots for 60 seconds and
+  `all`/`custom` snapshots for 24 hours; the **Refresh** button sends `force=1` and always
+  recomputes.
 - **Praised for its failure behavior:** a stale snapshot stays on screen when GitHub or the API is
   down, with a retry hint and the server's `Retry-After`.
-- **Auth-gated refreshes:** sign in to trigger a re-sync (one period or all three). Success
-  invalidates the cached views, `401` ends the session, `429` shows the retry delay.
 - **Meta panel:** scoring weights, GitHub rate-limit budget and snapshot freshness.
 
 ## Stack
 
 **Backend** — Express 5 · TypeScript (ESM) · Mongoose · Node 22+ · GitHub GraphQL API (REST
-fallback for outside collaborators) · node-cron · zod-validated config.
+fallback for member discovery and outside collaborators) · node-cron · zod-validated config.
 
 **Frontend** — Vite 8 · React 19 · TypeScript (strict) · Tailwind CSS v4 (`@theme` tokens) ·
-React Router 7 · TanStack Query 5 · react-hook-form + zod · lucide-react.
+React Router 7 · TanStack Query 5 · lucide-react.
 
 ## Quick start
 
-Prerequisites: Node 22+, MongoDB (or a MongoDB Atlas connection string), and a GitHub token with
-`read:org` access.
+Prerequisites: Node 22+, MongoDB (local or a MongoDB Atlas connection string), and a GitHub token.
 
 ```bash
 # 1. Backend
 cd backend
 npm install
-cp .env.example .env          # fill in JWT_SECRET, GITHUB_TOKEN, DATABASE_URL
+cp .env.example .env          # fill in GITHUB_TOKEN (+ DATABASE_* for Atlas)
 npm run dev                   # http://localhost:3000
 
 # 2. Frontend (second terminal)
@@ -50,8 +60,24 @@ npm install
 npm run dev                   # http://localhost:5173
 ```
 
+The backend refreshes `LEADERBOARD_ORGS` (default `MicroClub-USTHB`) at boot, so the first visit
+already has a snapshot.
+
 The Vite dev server proxies `/api/*` to `http://localhost:3000`, so the browser never makes a
 cross-origin request and the backend needs no CORS headers.
+
+### GitHub token
+
+- **Classic PAT** with `repo` + `read:org` + `read:user` — full member list, private repositories,
+  and private contributions.
+- **Fine-grained PAT** also works. When it cannot read organization membership, the collector
+  automatically falls back to the public member list **plus the contributors of every non-fork
+  repository** (readable from public data), so a public leaderboard still has real activity.
+  Private repositories are counted directly when the token can see them, so private work still
+  ranks even without the classic `read:user` scope.
+
+If a contributor works in a private repository the token cannot access, they cannot appear on the
+board. Grant the token access to those repositories, or use a classic PAT with `repo` + `read:user`.
 
 ### Production build
 
@@ -66,56 +92,52 @@ Serve `frontend/dist/` from any static host and make sure `/api` is reverse-prox
 
 ```
 backend/
-  app.ts                 Express app (helmet, rate limits, routes, error handling)
-  server.ts              entry point (DB connect, listen, cron, graceful shutdown)
-  routes/                Express routers (auth, leaderboard + rate-limit buckets)
+  app.ts                 Express app (helmet, routes, error handling)
+  server.ts              entry point (DB connect, migration, listen, boot refresh, cron)
+  routes/                Express routers (leaderboard + refresh rate-limit bucket)
   controllers/           HTTP semantics: validation, status codes, ETag, GitHub→HTTP error mapping
   services/
-    leaderboard/         collector → aggregator → sync (single-flight writes)
+    leaderboard/         collector → aggregator → sync (single-flight writes, TTL cache)
     github/              typed REST/GraphQL client (timeout, backoff, rate-limit merge)
-  models/                Mongoose schemas (User, LeaderboardSnapshot)
-  jobs/                  node-cron scheduler
-  middleware/            auth (requireAuth), request logging, error handling
-  lib/                   structured JSON logger (level filtering + credential redaction)
+  models/                Mongoose schemas (LeaderboardSnapshot + migration)
+  jobs/                  node-cron scheduler + boot refresh
+  middleware/            request logging, error handling
+  lib/                   structured JSON logger, bounded-concurrency helper
   config/                zod-validated config, fail-fast at boot
 
 frontend/
-  src/app/               router, provider stack, layout, 404
+  src/app/               router (root → default org), provider stack, layout, 404
   src/features/
-    auth/                session context/provider, login and register pages
-    home/                organization search
-    leaderboard/         queries + refresh mutation, table/cards, meta, stale banner
+    leaderboard/         queries + refresh mutation, timeline selector, table/cards, meta
   src/shared/
     api/                 typed DTOs and the single fetch wrapper (ApiError, ETag cache)
-    lib/                 cn, formatters, toast queue
+    lib/                 cn, formatters, UTC date helpers, org validation, toast queue
     ui/                  Button, States, Toasts
 ```
 
 ## How it works
 
-1. **Collect** — the scheduler (or an authenticated `POST /refresh`) walks every repository and
-   every member, batching GitHub GraphQL queries and merging REST results for outside
-   collaborators.
+1. **Collect** — the scheduler (or a public `POST /refresh`) discovers the organization's
+   contributors and queries contribution counts in batches. Multi-year windows are split into
+   ≤364-day chunks because GitHub caps a single range at one year.
 2. **Score** — commits, pull requests, reviews and issues are weighted into one number; ties break
-   deterministically.
-3. **Cache** — the ranked list is stored per organization and period, with a `generatedAt`
-   timestamp and any collector warnings.
+   deterministically. Bots and zero-activity members are dropped.
+3. **Cache** — the ranked list is stored per organization, period and range, with `generatedAt`,
+   the organization creation date, and any collector warnings.
 4. **Serve** — reads come from MongoDB only. `GET /leaderboard/:org` sends a weak ETag derived from
-   the snapshot (`generatedAt`, entry count, limit), so repeat views answer `304 Not Modified` and
-   reuse the cached body. A missing snapshot is a `202` with a message, not an error.
+   the snapshot, so repeat views answer `304 Not Modified` and reuse the cached body. A missing
+   snapshot is a `202` with a message, not an error.
 
 ## API overview
 
 All responses are JSON; errors use `{ "error": "..." }`.
 
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| `POST` | `/auth/register` | — | Create an account, returns `{ user, token }` |
-| `POST` | `/auth/login` | — | Sign in, returns `{ user, token }` |
-| `GET` | `/leaderboard/:org` | — | Snapshot from Mongo (never hits GitHub); `?period=7d\|30d\|year&limit=1..100`, supports ETag/304 |
-| `GET` | `/leaderboard/:org/meta` | — | Score weights, GitHub rate-limit budget, snapshot freshness |
-| `POST` | `/leaderboard/:org/refresh` | Bearer JWT | Trigger a refresh (spends GitHub quota); omit `period` to sync all three |
-| `GET` | `/health` | — | `{ "status": "ok" }` |
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/leaderboard/:org` | Snapshot from Mongo (never hits GitHub). `?period=month\|all\|custom&limit=1..100`, plus `from`/`to` for `custom`. Supports ETag/304 |
+| `GET` | `/leaderboard/:org/meta` | Score weights, GitHub rate-limit budget, organization creation date, snapshot freshness |
+| `POST` | `/leaderboard/:org/refresh` | Trigger a refresh (spends GitHub quota). `?period=…`, `from`/`to` for custom, `force=1` to bypass the cache |
+| `GET` | `/health` | `{ "status": "ok" }` |
 
 ## Scripts
 
@@ -140,5 +162,5 @@ Run from `frontend/`:
 
 ---
 
-Full backend documentation — environment variables, scoring formula, periods, scheduling, failure
-behavior and logging — is in [`backend/README.md`](backend/README.md).
+Full backend documentation — environment variables, scoring formula, periods, caching, scheduling,
+failure behavior and logging — is in [`backend/README.md`](backend/README.md).

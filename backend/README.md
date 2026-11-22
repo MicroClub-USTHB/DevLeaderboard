@@ -1,24 +1,24 @@
-# DevLeaderboard
+# DevLeaderboard — backend
 
-A GitHub organization leaderboard API. It collects contribution activity for every member of an
-organization across **all of its repositories**, ranks them with a composite score, caches the
+A GitHub organization leaderboard API. It collects contribution activity for every contributor of
+an organization across **all of its repositories**, ranks them with a composite score, caches the
 result in MongoDB, and serves it over a small HTTP API — so the read path never talks to GitHub.
 
 - **Stack:** Express 5 · TypeScript (ESM) · Mongoose
-- **Data source:** GitHub GraphQL API (members + contributions) with a REST fallback for outside
+- **Data source:** GitHub GraphQL API (contributions) with REST for member discovery and outside
   collaborators
-- **Refresh model:** scheduled (cron) + manual refresh → Mongo cache → cheap reads with ETag/304
+- **Refresh model:** scheduled (cron) + public manual refresh → Mongo cache → cheap reads with
+  ETag/304
+- **Default organization:** `MicroClub-USTHB`, refreshed at boot
 
 ---
 
 ## Quick start
 
-The whole project lives in `backend/`:
-
 ```bash
 cd backend
 npm install
-cp .env.example .env        # then fill in JWT_SECRET and GITHUB_TOKEN
+cp .env.example .env        # then fill in GITHUB_TOKEN
 npm run dev                 # http://localhost:3000
 ```
 
@@ -26,12 +26,27 @@ Requirements:
 
 - **Node 22+** (the project uses `import.meta.dirname` and native `fetch`)
 - **MongoDB** — either a local instance (default) or **MongoDB Atlas** via `DATABASE_URL`
-- A **GitHub PAT** with `repo` + `read:org` scopes (classic) — required at boot; the token
-  works for both public and private repositories
+- A **GitHub PAT** — required at boot.
+
+### GitHub token
+
+- **Classic PAT** with `repo` + `read:org` + `read:user`: full member list, private repositories,
+  and private contributions. GitHub only includes private/internal activity in
+  `contributionsCollection` when the token has the `read:user` scope.
+- **Fine-grained PAT**: also supported. When it cannot read organization membership, the collector
+  falls back to the **public member list plus the contributors of every non-fork repository**.
+  Private repositories are included when the token is granted access to them. Because fine-grained
+  tokens have no `read:user` scope, the collector reads visible private repositories directly
+  (commits, PRs, reviews, issues) instead of relying on the contribution graph.
+
+**Private contributions.** A leaderboard can only rank activity the token can see. If a contributor
+works in a private repository the token cannot access, they will not appear. Grant the token access
+to those repositories (fine-grained: *Contents: Read*, *Metadata: Read*, *Pull requests: Read*,
+*Issues: Read*), or use a classic PAT with `repo` + `read:user`.
 
 Configuration is validated with zod at startup: the process refuses to boot with a missing
-`JWT_SECRET` (< 16 chars), a missing `GITHUB_TOKEN`, an invalid `LEADERBOARD_CRON` expression,
-or an unknown `LOG_LEVEL`.
+`GITHUB_TOKEN`, an invalid `LEADERBOARD_CRON` expression, half-configured database credentials, or
+an unknown `LOG_LEVEL`.
 
 ### Environment variables
 
@@ -44,13 +59,9 @@ or an unknown `LOG_LEVEL`.
 | `DATABASE_SCHEME` | `mongodb` | `mongodb` or `mongodb+srv` — Atlas requires `mongodb+srv` |
 | `DATABASE_USER` / `DATABASE_PASSWORD` | *(empty)* | Must be set together; both empty = local unauthenticated MongoDB |
 | `DATABASE_NAME` | `devleaderboard` | Database name |
-| `JWT_SECRET` | — | **Required**, min 16 chars (use 32+ random chars in production) |
-| `JWT_EXPIRES_MINUTES` | `60` | Access-token lifetime |
-| `RATE_LIMIT_WINDOW_MS` | `900000` | Window for the `/auth` bucket |
-| `RATE_LIMIT_MAX` | `100` | Requests per window for `/auth` |
 | `RATE_LIMIT_REFRESH_WINDOW_MS` | `900000` | Window for the refresh bucket |
 | `RATE_LIMIT_REFRESH_MAX` | `10` | Refreshes per window (refreshes spend GitHub quota) |
-| `GITHUB_TOKEN` | — | **Required** PAT; scopes `repo` + `read:org` |
+| `GITHUB_TOKEN` | — | **Required** PAT |
 | `GITHUB_API_URL` | `https://api.github.com` | Override for GitHub Enterprise / failure drills |
 | `GITHUB_TIMEOUT_MS` | `15000` | Per-request timeout to GitHub |
 | `SCORE_COMMIT` | `5` | Score weight per commit |
@@ -58,7 +69,7 @@ or an unknown `LOG_LEVEL`.
 | `SCORE_REVIEW` | `3` | Score weight per PR review |
 | `SCORE_ISSUE` | `2` | Score weight per issue opened |
 | `LEADERBOARD_CRON` | `0 */6 * * *` | 5-field cron expression (server timezone) |
-| `LEADERBOARD_ORGS` | *(empty)* | Comma-separated org logins to refresh automatically. Empty = scheduler off (manual refresh still works for any org) |
+| `LEADERBOARD_ORGS` | `MicroClub-USTHB` | Comma-separated org logins to refresh automatically. Empty = scheduler off |
 | `LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error` — one JSON object per line |
 
 ---
@@ -76,94 +87,126 @@ score = SCORE_COMMIT * commits
 
 - Ranks are assigned by `score` descending; ties are broken deterministically.
 - **Bots are filtered out** (GitHub `[bot]` suffixes, `-bot` login suffixes, and a denylist).
-- Contributors are keyed by GitHub **node id** and deduplicated by lowercase login, so members
-  and outside collaborators never double-count.
+- Contributors are keyed by GitHub **node id** and deduplicated by lowercase login, so members,
+  outside collaborators and repository contributors never double-count.
+- Contributors with **zero activity** in the selected window are not ranked.
 
 ### Periods
 
 | `period` | Window |
 |---|---|
-| `7d` | last 7 days |
-| `30d` | last 30 days (default) |
-| `year` | last 364 days |
+| `month` | 1st of the current month, 00:00 UTC → now |
+| `all` | organization creation date → now |
+| `custom` | `from` → `to` (UTC day boundaries), at most 366 days, `to` not in the future |
 
-Snapshots are unique per `{ org (lowercased), period }`.
+Multi-year windows are split into chunks of at most **364 days** because GitHub's
+`contributionsCollection` rejects ranges longer than one year; the chunks are summed per
+contributor.
+
+### Snapshot keys and caching
+
+A snapshot is unique per `{ org (lowercased), period, rangeKey }`:
+
+- `rangeKey = ""` for `month` and `all`
+- `rangeKey = "YYYY-MM-DD_YYYY-MM-DD"` for a custom range
+
+A non-forced refresh serves a cached snapshot while it is fresh:
+
+| Period | Freshness |
+|---|---|
+| `month` | 60 seconds |
+| `all` | 24 hours |
+| `custom` | 24 hours |
+
+`force=1` (what the UI's **Refresh** button sends) bypasses the cache and always recomputes.
+Concurrent refreshes for the same key coalesce into a single GitHub run.
 
 ---
 
 ## API reference
 
-All responses are JSON. Errors use `{ "error": "..." }`.
+All responses are JSON. Errors use `{ "error": "..." }`. There is no authentication.
 
-### Auth endpoints
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/leaderboard/:org` | Snapshot from Mongo, or `304` with a matching ETag |
+| `GET` | `/leaderboard/:org/meta` | Weights, quota, organization creation date, snapshot freshness |
+| `POST` | `/leaderboard/:org/refresh` | Refresh one period, or `month` + `all` when `period` is omitted |
+| `GET` | `/health` | `{ "status": "ok" }` |
 
-| Method | Path | Auth | Success | Errors |
-|---|---|---|---|---|
-| `POST` | `/auth/register` | — | `201` `{ user, token }` | `400` validation, `409` duplicate email |
-| `POST` | `/auth/login` | — | `200` `{ user, token }` | `400` validation, `401` bad credentials |
-
-### Leaderboard endpoints
-
-| Method | Path | Auth | Success | Errors |
-|---|---|---|---|---|
-| `GET` | `/leaderboard/:org` | — | `200` snapshot, or `304` (ETag) | `400` bad `org`/`period`/`limit` |
-| `GET` | `/leaderboard/:org/meta` | — | `200` weights + quota + snapshot freshness | `400` bad `org` |
-| `POST` | `/leaderboard/:org/refresh` | Bearer JWT | `200` per-period results | `401` no/bad token, `400` bad input, `404` org not on GitHub, `429`/`503` GitHub rate-limited, `502` GitHub failed |
-| `GET` | `/health` | — | `200` `{ status: "ok" }` | — |
-
-**`GET /leaderboard/:org`** — reads only from Mongo (never calls GitHub).
+### `GET /leaderboard/:org`
 
 Query params:
 
-- `period` — `7d` \| `30d` (default) \| `year`
+- `period` — `month` (default) \| `all` \| `custom`
+- `from`, `to` — required for `custom`; `YYYY-MM-DD`
 - `limit` — `1..100` (default `50`)
 
 ```jsonc
 // 200
 {
-  "org": "acme",
-  "period": "30d",
-  "generatedAt": "2026-11-11T13:54:04.000Z",
-  "windowFrom": "2026-10-12T13:54:04.000Z",
-  "windowTo": "2026-11-11T13:54:04.000Z",
-  "total": 42,
-  "count": 42,
+  "org": "microclub-usthb",
+  "period": "month",
+  "rangeKey": "",
+  "generatedAt": "2026-11-22T17:21:14.693Z",
+  "windowFrom": "2026-11-01T00:00:00.000Z",
+  "windowTo": "2026-11-22T17:21:14.693Z",
+  "total": 12,
+  "count": 12,
   "warnings": [],
   "entries": [
-    { "key": "MDQ6VXNlcjE=", "login": "bassem", "avatarUrl": "...",
-      "commits": 120, "pullRequests": 18, "reviews": 40, "issues": 3,
-      "score": 1274, "rank": 1 }
+    { "key": "MDQ6VXNlcjUxMjM5NjU2", "login": "Adel2411", "avatarUrl": "...",
+      "commits": 119, "pullRequests": 29, "reviews": 4, "issues": 3,
+      "score": 903, "rank": 1 }
   ]
 }
 ```
 
-- **`202`** when no snapshot exists yet: `{ "org", "period", "message" }`. Not an error —
-  the schedule simply hasn't produced one. Trigger a refresh or wait for the cron run.
+- **`202`** when no snapshot exists yet: `{ "org", "period", "rangeKey", "message" }`. Not an error —
+  the client can trigger a refresh or wait for the cron run.
+- **`400`** for an invalid `org`, `period`, `limit`, or custom range (missing dates, `from > to`,
+  future `to`, more than 366 days).
 - **`ETag` / `304`:** every `200` carries a weak ETag derived from `generatedAt`, contributor
-  count and `limit`. Send it back as `If-None-Match` to get a bodyless `304`.
+  count, `limit` and `rangeKey`. Send it back as `If-None-Match` to get a bodyless `304`.
 
-**`GET /leaderboard/:org/meta`**
+### `GET /leaderboard/:org/meta`
 
 ```jsonc
 {
-  "org": "acme",
+  "org": "microclub-usthb",
+  "orgCreatedAt": "2018-10-13T21:55:27.000Z",
   "scoreWeights": { "Commit": 5, "PullRequest": 10, "Review": 3, "Issue": 2 },
-  "rateLimit": { "limit": 5000, "remaining": 4990, "resource": "graphql",
-                 "resetAt": "2026-11-11T15:00:00.000Z" },   // null before any GitHub call
+  "rateLimit": { "limit": 5000, "remaining": 4734, "resource": "graphql",
+                 "resetAt": "2026-11-22T18:00:00.000Z" },   // null before any GitHub call
   "snapshots": [
-    { "period": "7d",  "generatedAt": "...", "entryCount": 30 },
-    { "period": "30d", "generatedAt": "...", "entryCount": 42 },
-    { "period": "year","generatedAt": "...", "entryCount": 55 }
+    { "period": "month", "rangeKey": "", "orgCreatedAt": "...",
+      "windowFrom": "...", "windowTo": "...", "generatedAt": "...", "entryCount": 12 }
   ]
 }
 ```
 
-**`POST /leaderboard/:org/refresh`** — requires `Authorization: Bearer <jwt>`.
+### `POST /leaderboard/:org/refresh`
 
-- Omit `?period` to refresh **all three** periods (sequentially).
-- `?period=7d` refreshes only that period.
-- Spends GitHub quota, so it has its own tighter rate-limit bucket
-  (`RATE_LIMIT_REFRESH_*`).
+Query params:
+
+- `period` — optional; omit to refresh `month` and `all` sequentially
+- `from`, `to` — required when `period=custom`
+- `force` — `0` (default) or `1`; `1` bypasses the freshness window
+
+```jsonc
+// 200
+{
+  "org": "microclub-usthb",
+  "results": [
+    { "orgLogin": "microclub-usthb", "period": "month", "rangeKey": "",
+      "generatedAt": "...", "windowFrom": "...", "windowTo": "...",
+      "entryCount": 12, "warnings": [], "skipped": false }
+  ]
+}
+```
+
+The endpoint is public but rate-limited (`RATE_LIMIT_REFRESH_*`) because each run spends GitHub
+quota.
 
 GitHub failures are mapped and never surface as `500` from this endpoint:
 
@@ -171,14 +214,20 @@ GitHub failures are mapped and never surface as `500` from this endpoint:
 |---|---|
 | Org doesn't exist | `404` |
 | Rate limited (HTTP 429, or 403 with quota exhausted) | `503` + `Retry-After` when GitHub sent a reset time |
-| Bad/insufficient token (401/403) | `502` |
+| Bad/insufficient token (401/403) | `502` with GitHub's explanation |
 | Network failure / GitHub 5xx | `502` |
 
-### Scheduling
+---
 
-- `LEADERBOARD_CRON` (default every 6 hours) refreshes every org in `LEADERBOARD_ORGS`.
-- Runs are **sequential** with overlap protection (`noOverlap`), and the timer is `unref`'d so
-  it never keeps the process alive.
+## Scheduling
+
+- `LEADERBOARD_CRON` (default every 6 hours) refreshes `month` and `all` for every org in
+  `LEADERBOARD_ORGS`.
+- The server runs the same refresh **once at boot**, so the default org has a snapshot before the
+  first visitor arrives.
+- Runs are **sequential** with overlap protection (`noOverlap`), and the timer is `unref`'d so it
+  never keeps the process alive.
+- `custom` ranges cannot be scheduled — they are refreshed on demand.
 - **Empty `LEADERBOARD_ORGS` disables the scheduler** (logged as a warning at boot); manual
   refresh still works for any org.
 - A failure in one org or period is logged and swallowed — the read path keeps serving the
@@ -192,29 +241,25 @@ returning errors:
 - `GET /leaderboard/:org` keeps serving the last cached snapshot (`200`, same ETag),
 - `POST .../refresh` fails as an upstream error (`502`/`503`), not a crash.
 
-This is verified by an HTTP-level failure drill (server restarted with a dead
-`GITHUB_API_URL`): reads stayed `200`, refresh returned `502`, and the snapshot was
-byte-for-byte unchanged.
-
 ---
 
 ## Architecture
 
 ```
 backend/
-  routes/        Express routers (input surface, rate-limit buckets, auth middleware)
+  routes/        Express routers (input surface, refresh rate-limit bucket)
   controllers/   HTTP semantics: validation, status codes, ETag, GitHub→HTTP error mapping
   services/
-    leaderboard/   collector → aggregator → sync (single-flight writes)
+    leaderboard/   collector → aggregator → sync (single-flight writes, TTL cache)
     github/        typed REST/GraphQL client (timeout, backoff, rate-limit merge)
-  models/        Mongoose schemas (User, LeaderboardSnapshot)
-  jobs/          node-cron scheduler
-  middleware/    auth (requireAuth), request logging, error handling
-  lib/           structured JSON logger (level filtering + credential redaction)
+  models/        Mongoose schema (LeaderboardSnapshot) + migration
+  jobs/          node-cron scheduler + boot refresh
+  middleware/    request logging, error handling
+  lib/           structured JSON logger, bounded-concurrency helper
   config/        zod-validated config, fail-fast at boot
   infra/db/      MongoDB connection
   app.ts         Express app (middleware + routes)
-  server.ts      entry point (DB connect, listen, cron, graceful shutdown)
+  server.ts      entry point (DB connect, migration, listen, boot refresh, cron)
 ```
 
 Key decisions:
@@ -222,28 +267,36 @@ Key decisions:
 - **Layered:** routes → controllers → services → models. Controllers never touch GitHub
   directly; services never know about Express.
 - **ESM** with `.js` import suffixes; type-only imports use `import type`.
-- **Single-flight sync:** concurrent refreshes for the same `{org, period}` coalesce into one
-  GitHub collection run.
-- **GraphQL batching:** members come from `membersWithRole`, contributions from
-  `contributionsCollection(organizationID:…)` with 10 logins per request — variables only,
-  never string-interpolated. Outside collaborators come from REST
-  `/orgs/{org}/outside_collaborators` (the GraphQL field does not exist); a `403` there
-  degrades to a warning instead of failing the run.
-- **Security:** helmet, rate limiting, bcrypt hashing with a constant-time placeholder
-  (no account enumeration), generic 401s, credential redaction in logs, query strings never
-  logged (they may carry secrets).
+- **Single-flight sync:** concurrent refreshes for the same `{org, period, rangeKey}` coalesce
+  into one GitHub collection run.
+- **GraphQL batching:** contributions are queried 10 logins per request with variables only, never
+  string-interpolated. Batches run with bounded concurrency (4); repository contributor scans use
+  5.
+- **Member discovery:** `membersWithRole` when the token may read it; otherwise public members +
+  contributors of every non-fork repository. Repository contributors are unioned on **both** paths,
+  so a one-off contributor who is neither a member nor an outside collaborator is never missed.
+  Outside collaborators come from REST `/orgs/{org}/outside_collaborators` (no GraphQL field
+  exists); a `403` there is expected for non-owner tokens and is not reported as a snapshot warning.
+- **Private repositories:** listed when the token can see them. With `read:user`, GitHub's
+  `contributionsCollection` already includes private activity. Without it (fine-grained tokens),
+  the collector counts commits, PRs, reviews and issues directly from the private repositories, so
+  private work is still ranked instead of silently disappearing.
+- **Resilient collection:** bot logins are dropped before querying, and a single unresolvable login
+  is retried alone and skipped instead of failing the batch.
+- **Security:** helmet, per-IP refresh rate limiting, credential redaction in logs, query strings
+  never logged (they may carry secrets). No user accounts, no JWT, no cookies.
 
 ### Logging
 
 One JSON object per line:
 
 ```json
-{"method":"POST","path":"/leaderboard/honojs/refresh","status":502,"durationMs":3552.8,"time":"2026-11-11T13:54:40.030Z","level":"info","msg":"request"}
+{"method":"POST","path":"/leaderboard/microclub-usthb/refresh","status":200,"durationMs":8213.4,"time":"2026-11-22T17:21:40.114Z","level":"info","msg":"request"}
 ```
 
-Envelope fields (`time`, `level`, `msg`) are written last so caller fields can't forge them,
-and any key matching `token|secret|password|authorization|credential|cookie|api key` is
-redacted automatically. The logger never throws (unserializable fields degrade to a note).
+Envelope fields (`time`, `level`, `msg`) are written last so caller fields can't forge them, and
+any key matching `token|secret|password|authorization|credential|cookie|api key` is redacted
+automatically. The logger never throws (unserializable fields degrade to a note).
 
 ---
 
@@ -251,8 +304,17 @@ redacted automatically. The logger never throws (unserializable fields degrade t
 
 ```bash
 npm run typecheck   # tsc --noEmit (strict)
-npm run build       # tsc -p tsconfig.build.json
+npm run build       # compile to dist/
 ```
+
+Live verification performed against `MicroClub-USTHB`:
+
+- all three periods collect successfully with **0 warnings**,
+- `month` ≈ 8s, `custom` ≈ 7.5s, `all` ≈ 37s (bounded concurrency),
+- `GET` returns `200`, unknown org returns `202` for reads and `404` for refresh,
+- `period=7d` and malformed custom ranges return `400`,
+- ETag round-trip returns `304`,
+- `/meta` reports `orgCreatedAt` and the stored snapshots.
 
 ---
 
@@ -269,18 +331,17 @@ npm run build       # tsc -p tsconfig.build.json
 
 ## Project history
 
-Built phase by phase, each gated on typecheck + tests + review before moving on:
+Built phase by phase, each gated on typecheck and live verification before moving on:
 
-- **Phase 0 — foundations:** password-hash leak fix, fail-fast config, JWT secret handling,
-  centralized error middleware, helmet + rate limiting, app/server split with graceful
-  shutdown, vitest + supertest, strict tsconfig.
-- **Phase 1 — GitHub client:** auth headers, timeouts, capped backoff honoring
-  `retry-after`/`reset`, non-retryable permission 403s, rate-limit header merging, bounded
-  pagination, no token leakage in errors.
-- **Phase 2 — collection & scoring:** periods, pure aggregator, member/outside-collaborator
-  collector, snapshot model, single-flight sync.
-- **Phase 3 — API & scheduling:** `requireAuth`, leaderboard controller (ETag/304, 202 while
-  empty, GitHub→HTTP error mapping), routes with a dedicated refresh rate-limit bucket,
-  cron job with overlap protection, graceful shutdown wiring.
-- **Phase 4 — hardening:** structured JSON logger with redaction, per-request access log,
-  stale-serving failure drills (HTTP-level proof that reads never depend on GitHub), full docs.
+- **Foundations** — fail-fast config, centralized error middleware, helmet + rate limiting,
+  app/server split, structured logging with redaction, strict tsconfig.
+- **GitHub client** — timeouts, capped backoff honoring `retry-after`/`reset`, non-retryable
+  permission errors, rate-limit header merging, bounded pagination, no token leakage.
+- **Collection & scoring** — pure aggregator, member/outside-collaborator collector, snapshot
+  model, single-flight sync.
+- **API & scheduling** — leaderboard controller (ETag/304, 202 while empty, GitHub→HTTP mapping),
+  dedicated refresh rate-limit bucket, cron with overlap protection.
+- **Public rebuild (Nov 2026)** — removed authentication entirely; replaced fixed windows with
+  `month | all | custom`; added per-range snapshots, TTL caching with `force`, multi-year chunking,
+  bounded concurrency, boot refresh, the member-discovery fallback, bot filtering, and a
+  `202`-driven auto-refresh contract for the UI.
