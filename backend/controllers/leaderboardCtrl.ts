@@ -15,6 +15,7 @@ import {
     type CustomRange,
     type Period,
 } from "../services/leaderboard/periods.js";
+import { requestRefresh } from "../services/leaderboard/backgroundRefresh.js";
 import { syncLeaderboard } from "../services/leaderboard/sync.js";
 import type { SyncResult } from "../services/leaderboard/types.js";
 
@@ -146,9 +147,12 @@ const toHttpError = (error: GitHubError, res: Response): HttpError => {
 export const getLeaderboard = async (req: Request, res: Response): Promise<void> => {
     const { org } = orgParams.parse(req.params);
     const { period, limit, offset, from, to } = listQuery.parse(req.query);
-    const { rangeKey } = parseRange(period, from, to);
+    const { rangeKey, customRange } = parseRange(period, from, to);
 
     const snapshot = await findSnapshot(org, period, rangeKey);
+
+    // Readers always get what is stored; refreshing happens in the background.
+    requestRefresh(org, period, customRange);
 
     if (snapshot === null) {
         // Not a failure: the schedule simply has not produced this yet.
@@ -156,7 +160,7 @@ export const getLeaderboard = async (req: Request, res: Response): Promise<void>
             org: org.toLowerCase(),
             period,
             rangeKey,
-            message: "No snapshot yet, trigger a refresh or wait for the scheduled run",
+            message: "No snapshot yet, it is being built",
         });
         return;
     }

@@ -19,7 +19,7 @@ const HOUR_MS = 60 * MINUTE_MS;
  * cost many GitHub calls, so they are cached for a day.
  */
 const FRESHNESS_MS: Readonly<Record<Period, number>> = {
-    month: MINUTE_MS,
+    month: 15 * MINUTE_MS,
     all: 24 * HOUR_MS,
     custom: 24 * HOUR_MS,
 };
