@@ -45,7 +45,7 @@ const refreshOrg = async (orgLogin: string): Promise<OrgRefreshOutcome[]> => {
                 entryCount: result.entryCount,
             });
             for (const warning of result.warnings) {
-                logger.warn(`warning for ${result.orgLogin}/${period}`, {
+                logger.debug(`warning for ${result.orgLogin}/${period}`, {
                     org: result.orgLogin,
                     period,
                     warning,

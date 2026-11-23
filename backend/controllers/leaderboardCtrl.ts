@@ -7,7 +7,6 @@ import {
     findSnapshotSummaries,
 } from "../models/leaderboardSnapshot.js";
 import { GitHubError } from "../services/github/errors.js";
-import { githubClient } from "../services/github/githubClient.js";
 import {
     MAX_CUSTOM_DAYS,
     PERIODS,
@@ -182,7 +181,6 @@ export const getLeaderboard = async (req: Request, res: Response): Promise<void>
         windowTo: snapshot.windowTo,
         total: snapshot.contributors.length,
         count: entries.length,
-        warnings: snapshot.warnings,
         entries,
     });
 };
@@ -191,15 +189,12 @@ export const getLeaderboardMeta = async (req: Request, res: Response): Promise<v
     const { org } = orgParams.parse(req.params);
 
     const snapshots = await findSnapshotSummaries(org);
-    // Reports only what the last GitHub response carried; never throws.
-    const rateLimit = githubClient.getRateLimit();
     const orgCreatedAt = snapshots[0]?.orgCreatedAt ?? null;
 
     res.status(200).json({
         org: org.toLowerCase(),
         orgCreatedAt,
         scoreWeights: config.Score,
-        rateLimit: rateLimit ?? null,
         snapshots,
     });
 };

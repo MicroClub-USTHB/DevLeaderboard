@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, type ReactNode } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
-import { AlertTriangle, Inbox, RefreshCw } from "lucide-react";
+import { Inbox, RefreshCw } from "lucide-react";
 import { ApiError } from "@/shared/api/client";
 import { hasSnapshot, PERIODS, type Period } from "@/shared/api/types";
 import { defaultCustomRange, validateRange, type DateRange } from "@/shared/lib/dates";
@@ -11,7 +11,6 @@ import { DEFAULT_PERIOD, MAX_CUSTOM_DAYS, PAGE_SIZE } from "../constants";
 import { useLeaderboard, useLeaderboardMeta, useRefresh } from "../api";
 import { MetaPanel } from "../components/MetaPanel";
 import { Pagination } from "../components/Pagination";
-import { RefreshButton } from "../components/RefreshButton";
 import { ScoreCards } from "../components/ScoreCards";
 import { ScoreTable } from "../components/ScoreTable";
 import { StaleDataBanner } from "../components/StaleDataBanner";
@@ -183,29 +182,8 @@ export const LeaderboardPage = (): ReactNode => {
                         to={selectorRange.to}
                         onChange={changeTimeline}
                     />
-                    <RefreshButton
-                        label="Refresh"
-                        onRefresh={handleRefresh}
-                        busy={refresh.isPending}
-                    />
                 </div>
             </div>
-
-            {/* Warnings from the last collection run — non-blocking by design. */}
-            {snapshot !== null && snapshot.warnings.length > 0 && (
-                <div className="flex items-start gap-2.5 rounded-lg border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-ink-muted">
-                    <AlertTriangle
-                        size={16}
-                        className="mt-0.5 shrink-0 text-warning"
-                        aria-hidden
-                    />
-                    <p>
-                        {snapshot.warnings.length} warning
-                        {snapshot.warnings.length > 1 ? "s" : ""} during the last refresh:{" "}
-                        {snapshot.warnings.join(" · ")}
-                    </p>
-                </div>
-            )}
 
             {/* States */}
             {leaderboard.isPending ? (
@@ -315,14 +293,7 @@ export const LeaderboardPage = (): ReactNode => {
                     description={
                         refresh.isPending
                             ? "Collecting every branch, PR, review and issue from GitHub. All-time and multi-month ranges can take several minutes."
-                            : "No snapshot exists for this period yet. Start a refresh to build it."
-                    }
-                    action={
-                        <RefreshButton
-                            label="Refresh now"
-                            onRefresh={handleRefresh}
-                            busy={refresh.isPending}
-                        />
+                            : "No snapshot exists for this period yet. It will be built automatically."
                     }
                 />
             ) : (

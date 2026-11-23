@@ -34,7 +34,6 @@ export interface LeaderboardSnapshot {
     windowTo: string;
     total: number;
     count: number;
-    warnings: string[];
     entries: LeaderboardEntry[];
 }
 
@@ -59,14 +58,6 @@ export interface ScoreWeights {
     Issue: number;
 }
 
-export interface RateLimitInfo {
-    limit?: number;
-    remaining?: number;
-    cost?: number;
-    resource?: string;
-    resetAt?: string;
-}
-
 export interface SnapshotSummary {
     period: Period;
     rangeKey: string;
@@ -82,7 +73,6 @@ export interface LeaderboardMeta {
     org: string;
     orgCreatedAt: string | null;
     scoreWeights: ScoreWeights;
-    rateLimit: RateLimitInfo | null;
     snapshots: SnapshotSummary[];
 }
 
