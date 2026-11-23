@@ -34,10 +34,17 @@ Requirements:
   and private contributions. GitHub only includes private/internal activity in
   `contributionsCollection` when the token has the `read:user` scope.
 - **Fine-grained PAT**: also supported. When it cannot read organization membership, the collector
-  falls back to the **public member list plus the contributors of every non-fork repository**.
+  falls back to the **public member list plus the contributors of every visible repository**.
   Private repositories are included when the token is granted access to them. Because fine-grained
   tokens have no `read:user` scope, the collector reads visible private repositories directly
-  (commits, PRs, reviews, issues) instead of relying on the contribution graph.
+  (all branches, PRs, reviews, issues) instead of relying on the contribution graph.
+
+**Collection scope.** Every visible repository is scanned, forks included, and every branch is
+read. Commits are deduplicated by SHA across branches and repositories. PRs count when they were
+opened or closed/merged in the window; reviews count once per person per PR; issues count when they
+were opened or solved in the window (the opener and closer can both receive credit). This goes
+beyond GitHub's contribution graph, which only counts default-branch/`gh-pages` commits, PRs opened,
+issues opened, and (with `read:user`) private activity.
 
 **Private contributions.** A leaderboard can only rank activity the token can see. If a contributor
 works in a private repository the token cannot access, they will not appear. Grant the token access
@@ -64,10 +71,10 @@ an unknown `LOG_LEVEL`.
 | `GITHUB_TOKEN` | — | **Required** PAT |
 | `GITHUB_API_URL` | `https://api.github.com` | Override for GitHub Enterprise / failure drills |
 | `GITHUB_TIMEOUT_MS` | `15000` | Per-request timeout to GitHub |
-| `SCORE_COMMIT` | `5` | Score weight per commit |
-| `SCORE_PR` | `10` | Score weight per merged PR |
-| `SCORE_REVIEW` | `3` | Score weight per PR review |
-| `SCORE_ISSUE` | `2` | Score weight per issue opened |
+| `SCORE_COMMIT` | `5` | Score weight per unique commit |
+| `SCORE_PR` | `10` | Score weight per PR opened or closed/merged in the window |
+| `SCORE_REVIEW` | `3` | Score weight per PR review (once per person per PR) |
+| `SCORE_ISSUE` | `2` | Score weight per issue opened or solved in the window |
 | `LEADERBOARD_CRON` | `0 */6 * * *` | 5-field cron expression (server timezone) |
 | `LEADERBOARD_ORGS` | `MicroClub-USTHB` | Comma-separated org logins to refresh automatically. Empty = scheduler off |
 | `LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error` — one JSON object per line |
@@ -80,7 +87,7 @@ Each contributor's score is a weighted composite:
 
 ```
 score = SCORE_COMMIT * commits
-      + SCORE_PR     * mergedPullRequests
+      + SCORE_PR     * pullRequests
       + SCORE_REVIEW * reviews
       + SCORE_ISSUE  * issues
 ```
@@ -141,6 +148,7 @@ Query params:
 - `period` — `month` (default) \| `all` \| `custom`
 - `from`, `to` — required for `custom`; `YYYY-MM-DD`
 - `limit` — `1..100` (default `50`)
+- `offset` — number of ranked contributors to skip (default `0`), for pagination
 
 ```jsonc
 // 200
@@ -164,10 +172,10 @@ Query params:
 
 - **`202`** when no snapshot exists yet: `{ "org", "period", "rangeKey", "message" }`. Not an error —
   the client can trigger a refresh or wait for the cron run.
-- **`400`** for an invalid `org`, `period`, `limit`, or custom range (missing dates, `from > to`,
+- **`400`** for an invalid `org`, `period`, `limit`, `offset`, or custom range (missing dates, `from > to`,
   future `to`, more than 366 days).
 - **`ETag` / `304`:** every `200` carries a weak ETag derived from `generatedAt`, contributor
-  count, `limit` and `rangeKey`. Send it back as `If-None-Match` to get a bodyless `304`.
+  count, `limit`, `offset` and `rangeKey`. Send it back as `If-None-Match` to get a bodyless `304`.
 
 ### `GET /leaderboard/:org/meta`
 
@@ -272,15 +280,21 @@ Key decisions:
 - **GraphQL batching:** contributions are queried 10 logins per request with variables only, never
   string-interpolated. Batches run with bounded concurrency (4); repository contributor scans use
   5.
+- **All-branch repository scan:** every visible repository (forks included) is read in two passes.
+  The first pass records default/`gh-pages` commit SHAs and any private fallback counts; the second
+  pass adds non-default-branch commits, PRs closed/merged after being opened, and solved issues.
+  Commit SHAs are deduplicated globally so merged commits are never counted twice. Scans use bounded
+  concurrency (3 repositories, 4 branches).
 - **Member discovery:** `membersWithRole` when the token may read it; otherwise public members +
-  contributors of every non-fork repository. Repository contributors are unioned on **both** paths,
-  so a one-off contributor who is neither a member nor an outside collaborator is never missed.
-  Outside collaborators come from REST `/orgs/{org}/outside_collaborators` (no GraphQL field
-  exists); a `403` there is expected for non-owner tokens and is not reported as a snapshot warning.
+  contributors of every visible repository. Repository contributors are unioned on **both** paths,
+  and the repository scan also discovers PR authors, reviewers and issue participants who never
+  committed. Outside collaborators come from REST `/orgs/{org}/outside_collaborators` (no GraphQL
+  field exists); a `403` there is expected for non-owner tokens and is not reported as a snapshot
+  warning.
 - **Private repositories:** listed when the token can see them. With `read:user`, GitHub's
-  `contributionsCollection` already includes private activity. Without it (fine-grained tokens),
-  the collector counts commits, PRs, reviews and issues directly from the private repositories, so
-  private work is still ranked instead of silently disappearing.
+  `contributionsCollection` already includes private activity, so only the extras are merged.
+  Without it (fine-grained tokens), the full all-branch scan of private repositories supplies every
+  metric, so private work is still ranked instead of silently disappearing.
 - **Resilient collection:** bot logins are dropped before querying, and a single unresolvable login
   is retried alone and skipped instead of failing the batch.
 - **Security:** helmet, per-IP refresh rate limiting, credential redaction in logs, query strings

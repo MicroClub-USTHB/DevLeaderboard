@@ -5,7 +5,8 @@ organization across **all of its repositories**, ranks them with a composite sco
 result in MongoDB, and serves it through a small HTTP API. The read path never talks to GitHub.
 
 The site opens directly on **`MicroClub-USTHB`** at `/leaderboard/MicroClub-USTHB` — no login,
-no setup screen. Any other organization can still be opened with the header switcher.
+no setup screen. Any other organization can be opened by navigating to
+`/leaderboard/<org-login>`.
 
 The repo contains both halves of the product:
 
@@ -16,16 +17,17 @@ The repo contains both halves of the product:
 
 ## What the app does
 
-- **Opens on the club leaderboard.** `/` redirects to `/leaderboard/MicroClub-USTHB`; the header
-  has a compact switcher for any other GitHub organization.
+- **Opens on the club leaderboard.** `/` redirects to `/leaderboard/MicroClub-USTHB`. The header
+  is a plain wordmark; there is no org switcher or search box.
 - **Three timeline options** — **This month** (1st of the month, 00:00 UTC → now), **All time**
   (organization creation → now), and a **custom range** picked with From/To date inputs. The
-  selection lives in the URL (`?period=month|all|custom&from=YYYY-MM-DD&to=YYYY-MM-DD`) so every
-  view is shareable and bookmarkable.
+  selection lives in the URL (`?period=month|all|custom&from=YYYY-MM-DD&to=YYYY-MM-DD&page=N`) so
+  every view is shareable and bookmarkable.
 - **No authentication.** Reads and refreshes are public. Refreshes are rate-limited per IP because
   they spend GitHub quota.
 - **Desktop table and mobile cards** with rank, commits, pull requests, reviews, issues and the
-  weighted score.
+  weighted score. The table is paginated (20 per page, server-side `offset`), and uses
+  Premier-League-style zones: the top four rows are green, the bottom three are red.
 - **Automatic first snapshot.** If a period has never been collected, the page gets a `202`, starts
   the refresh itself, and polls until the snapshot lands.
 - **Caching with an explicit escape hatch.** The server serves `month` snapshots for 60 seconds and
@@ -71,10 +73,15 @@ cross-origin request and the backend needs no CORS headers.
 - **Classic PAT** with `repo` + `read:org` + `read:user` — full member list, private repositories,
   and private contributions.
 - **Fine-grained PAT** also works. When it cannot read organization membership, the collector
-  automatically falls back to the public member list **plus the contributors of every non-fork
-  repository** (readable from public data), so a public leaderboard still has real activity.
-  Private repositories are counted directly when the token can see them, so private work still
-  ranks even without the classic `read:user` scope.
+  automatically falls back to the public member list **plus the contributors of every visible
+  repository** (forks included), so a public leaderboard still has real activity. Private
+  repositories are counted directly when the token can see them, so private work still ranks even
+  without the classic `read:user` scope.
+
+Activity is counted from **every branch** of every visible repository, not just the default branch.
+That includes unmerged feature-branch commits, PRs opened or closed/merged in the window, every
+submitted review, and issues opened or solved in the window. Commits are deduplicated by SHA, so a
+merge that makes the same commit reachable from several branches is counted once.
 
 If a contributor works in a private repository the token cannot access, they cannot appear on the
 board. Grant the token access to those repositories, or use a classic PAT with `repo` + `read:user`.
@@ -117,16 +124,20 @@ frontend/
 
 ## How it works
 
-1. **Collect** — the scheduler (or a public `POST /refresh`) discovers the organization's
-   contributors and queries contribution counts in batches. Multi-year windows are split into
+1. **Collect** — the scheduler (or a public `POST /refresh`) reads every visible repository across
+   every branch, discovers contributors from commits, PRs, reviews and issues, then queries
+   `contributionsCollection` in batches for the contribution-graph baseline. A direct repository
+   scan adds what GraphQL leaves out: non-default-branch commits, PRs closed/merged after they were
+   opened, and issues solved by someone other than the opener. Multi-year windows are split into
    ≤364-day chunks because GitHub caps a single range at one year.
 2. **Score** — commits, pull requests, reviews and issues are weighted into one number; ties break
    deterministically. Bots and zero-activity members are dropped.
 3. **Cache** — the ranked list is stored per organization, period and range, with `generatedAt`,
    the organization creation date, and any collector warnings.
-4. **Serve** — reads come from MongoDB only. `GET /leaderboard/:org` sends a weak ETag derived from
-   the snapshot, so repeat views answer `304 Not Modified` and reuse the cached body. A missing
-   snapshot is a `202` with a message, not an error.
+4. **Serve** — reads come from MongoDB only. `GET /leaderboard/:org` supports `limit`/`offset`
+   pagination and sends a weak ETag derived from the snapshot, so repeat views answer
+   `304 Not Modified` and reuse the cached body. A missing snapshot is a `202` with a message, not
+   an error.
 
 ## API overview
 
@@ -134,7 +145,7 @@ All responses are JSON; errors use `{ "error": "..." }`.
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/leaderboard/:org` | Snapshot from Mongo (never hits GitHub). `?period=month\|all\|custom&limit=1..100`, plus `from`/`to` for `custom`. Supports ETag/304 |
+| `GET` | `/leaderboard/:org` | Snapshot from Mongo (never hits GitHub). `?period=month\|all\|custom&limit=1..100&offset=0..`, plus `from`/`to` for `custom`. Supports ETag/304 |
 | `GET` | `/leaderboard/:org/meta` | Score weights, GitHub rate-limit budget, organization creation date, snapshot freshness |
 | `POST` | `/leaderboard/:org/refresh` | Trigger a refresh (spends GitHub quota). `?period=…`, `from`/`to` for custom, `force=1` to bypass the cache |
 | `GET` | `/health` | `{ "status": "ok" }` |

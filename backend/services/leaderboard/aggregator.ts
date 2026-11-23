@@ -16,6 +16,7 @@ const BOT_DENYLIST: ReadonlySet<string> = new Set([
     "copilot",
     "copilot-swe-agent",
     "github-copilot",
+    "web-flow",
 ]);
 
 export const isBotLogin = (login: string): boolean => {

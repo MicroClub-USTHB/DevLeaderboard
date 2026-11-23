@@ -22,6 +22,8 @@ const BATCH_SIZE = 10;
  */
 const REPO_CONCURRENCY = 5;
 const CONTRIBUTION_CONCURRENCY = 4;
+const SCAN_REPO_CONCURRENCY = 3;
+const BRANCH_CONCURRENCY = 4;
 
 const ORG_MEMBERS_QUERY = `
 query ($login: String!, $cursor: String) {
@@ -194,6 +196,9 @@ const isSkippableRepoError = (error: unknown): boolean =>
     error instanceof GitHubError &&
     (error.status === 403 || error.status === 404 || error.status === 409) &&
     error.rateLimit?.remaining !== 0;
+
+const errorDetail = (error: unknown): string =>
+    error instanceof Error ? error.message : String(error);
 
 const fetchOrgIdentity = async (
     orgLogin: string,
@@ -382,25 +387,6 @@ const isUnresolvableUser = (error: unknown): boolean =>
         error.type === "NOT_FOUND" ||
         /could not resolve to a user/i.test(error.message));
 
-/** Private repositories are scanned with bounded parallelism, like public ones. */
-const PRIVATE_REPO_CONCURRENCY = 3;
-
-/**
- * Review counting costs one request per PR, so cap it. PR/issue/commit counts
- * are unaffected; only the review scan of very busy private repositories is
- * bounded.
- */
-const MAX_REVIEW_PRS_PER_REPO = 500;
-
-/** Activity discovered by reading a private repository directly. */
-interface PrivateActivity {
-    user: UserNode;
-    commits: number;
-    pullRequests: number;
-    reviews: number;
-    issues: number;
-}
-
 interface RestUser {
     login: string;
     id: number;
@@ -408,8 +394,14 @@ interface RestUser {
     avatar_url?: string;
 }
 
+interface BranchRest {
+    name: string;
+}
+
 interface CommitRest {
+    sha: string;
     author: RestUser | null;
+    committer: RestUser | null;
 }
 
 interface PullRest {
@@ -417,6 +409,8 @@ interface PullRest {
     user: RestUser | null;
     created_at: string;
     updated_at: string;
+    closed_at: string | null;
+    merged_at: string | null;
 }
 
 interface ReviewRest {
@@ -425,13 +419,17 @@ interface ReviewRest {
 }
 
 interface IssueRest {
+    number: number;
     user: RestUser | null;
     created_at: string;
+    updated_at: string;
+    closed_at: string | null;
+    closed_by: RestUser | null;
     pull_request?: unknown;
 }
 
-const toRestUser = (user: RestUser | null): UserNode | undefined => {
-    if (user === null || user.login.length === 0) return undefined;
+const toRestUser = (user: RestUser | null | undefined): UserNode | undefined => {
+    if (user === null || user === undefined || user.login.length === 0) return undefined;
     return {
         id: user.node_id ?? String(user.id),
         login: user.login,
@@ -439,15 +437,68 @@ const toRestUser = (user: RestUser | null): UserNode | undefined => {
     };
 };
 
+const commitUser = (commit: CommitRest): UserNode | undefined =>
+    toRestUser(commit.author) ?? toRestUser(commit.committer);
+
+const timeOf = (value: string): number => Date.parse(value);
+
+/** Counts attributed to one account during a repository scan. */
+interface ActivityCounts {
+    user: UserNode;
+    commits: number;
+    pullRequests: number;
+    reviews: number;
+    issues: number;
+}
+
+type ActivityField = "commits" | "pullRequests" | "reviews" | "issues";
+
+interface ScanResult {
+    /** Every account seen in any repository, used to widen the GraphQL batch. */
+    users: Map<string, UserNode>;
+    /** Activity GraphQL misses: non-default-branch commits, late PR closures, solved issues. */
+    publicExtra: Map<string, ActivityCounts>;
+    privateExtra: Map<string, ActivityCounts>;
+    /** Full activity of private repositories when GraphQL cannot see them. */
+    privateFull: Map<string, ActivityCounts>;
+}
+
+interface ScanContext {
+    client: CollectorClient;
+    window: TimeWindow;
+    warnings: string[];
+    users: Map<string, UserNode>;
+    publicExtra: Map<string, ActivityCounts>;
+    privateExtra: Map<string, ActivityCounts>;
+    privateFull: Map<string, ActivityCounts>;
+    /** Commits reachable from a default/gh-pages branch, already counted by GraphQL. */
+    baselineCommits: Set<string>;
+    seenExtraCommits: Set<string>;
+    seenFullCommits: Set<string>;
+    seenExtraPulls: Set<string>;
+    seenFullPulls: Set<string>;
+    seenFullReviews: Set<string>;
+    seenFullIssues: Set<string>;
+    seenExtraIssues: Set<string>;
+    privateContributionsVisible: boolean;
+}
+
+interface RepoPlan {
+    repo: RepoRest;
+    extraBranches: BranchRest[];
+    extra: Map<string, ActivityCounts> | null;
+    full: Map<string, ActivityCounts> | null;
+}
+
 const activityFor = (
-    activity: Map<string, PrivateActivity>,
+    activity: Map<string, ActivityCounts>,
     user: UserNode,
-): PrivateActivity => {
+): ActivityCounts => {
     const key = user.login.toLowerCase();
     const existing = activity.get(key);
     if (existing !== undefined) return existing;
 
-    const created: PrivateActivity = {
+    const created: ActivityCounts = {
         user,
         commits: 0,
         pullRequests: 0,
@@ -458,81 +509,334 @@ const activityFor = (
     return created;
 };
 
-const timeOf = (value: string): number => Date.parse(value);
+const addActivity = (
+    activity: Map<string, ActivityCounts>,
+    user: UserNode,
+    field: ActivityField,
+): void => {
+    activityFor(activity, user)[field] += 1;
+};
+
+const recordUser = (context: ScanContext, user: UserNode): void => {
+    const key = user.login.toLowerCase();
+    if (!context.users.has(key)) context.users.set(key, user);
+};
+
+const listBranches = async (repo: RepoRest, context: ScanContext): Promise<BranchRest[]> => {
+    const path = `/repos/${repo.full_name}/branches?per_page=100`;
+    try {
+        return await drain(context.client.paginateRest<BranchRest>(path));
+    } catch (error) {
+        if (!isSkippableRepoError(error)) throw error;
+        context.warnings.push(
+            `Could not list branches for ${repo.full_name}; using its default branch only`,
+        );
+        return [{ name: repo.default_branch }];
+    }
+};
+
+const forEachCommit = async (
+    repo: RepoRest,
+    branch: string,
+    context: ScanContext,
+    visit: (commit: CommitRest) => void,
+): Promise<void> => {
+    const query = new URLSearchParams({
+        sha: branch,
+        since: context.window.from.toISOString(),
+        until: context.window.to.toISOString(),
+        per_page: "100",
+    });
+
+    try {
+        for await (const commit of context.client.paginateRest<CommitRest>(
+            `/repos/${repo.full_name}/commits?${query.toString()}`,
+        )) {
+            visit(commit);
+        }
+    } catch (error) {
+        if (!isSkippableRepoError(error)) throw error;
+        context.warnings.push(`Could not read branch "${branch}" of ${repo.full_name}`);
+    }
+};
 
 /**
- * Counts one private repository's activity in the window. Mirrors the
- * definitions of GitHub's `contributionsCollection`: commits on the default
- * branch, PRs opened, issues opened, and one review per person per PR.
+ * Lists branches and reads the branches GitHub already counts (default and
+ * gh-pages). Their commit SHAs form the baseline used later to avoid counting
+ * merged commits twice.
  */
-const countPrivateRepoActivity = async (
-    repo: RepoRest,
-    window: TimeWindow,
-    client: CollectorClient,
-    activity: Map<string, PrivateActivity>,
-): Promise<void> => {
-    const from = window.from.getTime();
-    const to = window.to.getTime();
-    const fromIso = window.from.toISOString();
-    const toIso = window.to.toISOString();
+const prepareRepo = async (repo: RepoRest, context: ScanContext): Promise<RepoPlan> => {
+    const branches = await listBranches(repo, context);
+    const names = new Set(branches.map((branch) => branch.name));
+    const baselineBranches = new Set<string>([repo.default_branch]);
+    if (names.has("gh-pages")) baselineBranches.add("gh-pages");
 
-    // Commits on the default branch, restricted to the window by the API.
-    const commitsPath = `/repos/${repo.full_name}/commits?since=${encodeURIComponent(
-        fromIso,
-    )}&until=${encodeURIComponent(toIso)}&per_page=100`;
-    for await (const commit of client.paginateRest<CommitRest>(commitsPath)) {
-        const user = toRestUser(commit.author);
-        if (user === undefined) continue;
-        activityFor(activity, user).commits += 1;
-    }
+    const useFull = repo.private && !context.privateContributionsVisible;
+    const extra = useFull ? null : repo.private ? context.privateExtra : context.publicExtra;
+    const full = useFull ? context.privateFull : null;
 
-    // PRs updated in the window. A PR opened in the window is necessarily
-    // updated in it too, so one listing covers both PR counts and reviews.
-    const pullsPath = `/repos/${repo.full_name}/pulls?state=all&sort=updated&direction=desc&per_page=100`;
-    let reviewScans = 0;
-    for await (const pull of client.paginateRest<PullRest>(pullsPath)) {
-        if (timeOf(pull.updated_at) < from) break;
+    await mapWithConcurrency([...baselineBranches], BRANCH_CONCURRENCY, async (branch) => {
+        await forEachCommit(repo, branch, context, (commit) => {
+            context.baselineCommits.add(commit.sha);
 
-        const createdAt = timeOf(pull.created_at);
-        if (createdAt >= from && createdAt <= to) {
+            const user = commitUser(commit);
+            if (user === undefined) return;
+            recordUser(context, user);
+
+            if (full === null || context.seenFullCommits.has(commit.sha)) return;
+            context.seenFullCommits.add(commit.sha);
+            addActivity(full, user, "commits");
+        });
+    });
+
+    return {
+        repo,
+        extraBranches: branches.filter((branch) => !baselineBranches.has(branch.name)),
+        extra,
+        full,
+    };
+};
+
+const scanExtraBranches = async (plan: RepoPlan, context: ScanContext): Promise<void> => {
+    const { repo, extraBranches, extra, full } = plan;
+
+    await mapWithConcurrency(extraBranches, BRANCH_CONCURRENCY, async (branch) => {
+        await forEachCommit(repo, branch.name, context, (commit) => {
+            const user = commitUser(commit);
+            if (user === undefined) return;
+            recordUser(context, user);
+
+            if (full !== null && !context.seenFullCommits.has(commit.sha)) {
+                context.seenFullCommits.add(commit.sha);
+                addActivity(full, user, "commits");
+            }
+
+            if (extra === null) return;
+            if (context.baselineCommits.has(commit.sha)) return;
+            if (context.seenExtraCommits.has(commit.sha)) return;
+
+            context.seenExtraCommits.add(commit.sha);
+            addActivity(extra, user, "commits");
+        });
+    });
+};
+
+const scanPullRequests = async (plan: RepoPlan, context: ScanContext): Promise<void> => {
+    const { repo, extra, full } = plan;
+    const from = context.window.from.getTime();
+    const to = context.window.to.getTime();
+    const path = `/repos/${repo.full_name}/pulls?state=all&sort=updated&direction=desc&per_page=100`;
+
+    try {
+        for await (const pull of context.client.paginateRest<PullRest>(path)) {
+            if (timeOf(pull.updated_at) < from) break;
+
             const author = toRestUser(pull.user);
-            if (author !== undefined) activityFor(activity, author).pullRequests += 1;
+            if (author !== undefined) recordUser(context, author);
+
+            const createdAt = timeOf(pull.created_at);
+            const closedAt = pull.closed_at ? timeOf(pull.closed_at) : null;
+            const mergedAt = pull.merged_at ? timeOf(pull.merged_at) : null;
+            const createdInWindow = createdAt >= from && createdAt <= to;
+            const closedInWindow =
+                (closedAt !== null && closedAt >= from && closedAt <= to) ||
+                (mergedAt !== null && mergedAt >= from && mergedAt <= to);
+            const pullKey = `${repo.full_name}#${pull.number}`;
+
+            if (
+                full !== null &&
+                (createdInWindow || closedInWindow) &&
+                !context.seenFullPulls.has(pullKey)
+            ) {
+                context.seenFullPulls.add(pullKey);
+                if (author !== undefined) addActivity(full, author, "pullRequests");
+            }
+
+            // GraphQL counts PRs opened in the window. A PR opened earlier but
+            // closed or merged now is additional activity GraphQL misses.
+            if (
+                extra !== null &&
+                !createdInWindow &&
+                closedInWindow &&
+                author !== undefined &&
+                !context.seenExtraPulls.has(pullKey)
+            ) {
+                context.seenExtraPulls.add(pullKey);
+                addActivity(extra, author, "pullRequests");
+            }
+
+            // A review submitted in the window necessarily updates the PR, so
+            // this updated-desc listing visits every PR that can hold one.
+            const reviewers = new Map<string, UserNode>();
+            try {
+                for await (const review of context.client.paginateRest<ReviewRest>(
+                    `/repos/${repo.full_name}/pulls/${pull.number}/reviews?per_page=100`,
+                )) {
+                    if (review.submitted_at === null) continue;
+                    const submittedAt = timeOf(review.submitted_at);
+                    if (submittedAt < from || submittedAt > to) continue;
+
+                    const reviewer = toRestUser(review.user);
+                    if (reviewer === undefined) continue;
+                    recordUser(context, reviewer);
+                    reviewers.set(reviewer.login.toLowerCase(), reviewer);
+                }
+            } catch (error) {
+                if (!isSkippableRepoError(error)) throw error;
+                context.warnings.push(
+                    `Could not read reviews for ${repo.full_name}#${pull.number}`,
+                );
+            }
+
+            if (full === null) continue;
+            for (const [login, reviewer] of reviewers) {
+                const reviewKey = `${pullKey}#${login}`;
+                if (context.seenFullReviews.has(reviewKey)) continue;
+                context.seenFullReviews.add(reviewKey);
+                addActivity(full, reviewer, "reviews");
+            }
         }
-
-        if (reviewScans >= MAX_REVIEW_PRS_PER_REPO) continue;
-        reviewScans += 1;
-
-        const reviewsPath = `/repos/${repo.full_name}/pulls/${pull.number}/reviews?per_page=100`;
-        const reviewers = new Set<string>();
-        for await (const review of client.paginateRest<ReviewRest>(reviewsPath)) {
-            if (review.submitted_at === null) continue;
-            const submittedAt = timeOf(review.submitted_at);
-            if (submittedAt < from || submittedAt > to) continue;
-
-            const reviewer = toRestUser(review.user);
-            if (reviewer === undefined) continue;
-            reviewers.add(reviewer.login.toLowerCase());
-            activityFor(activity, reviewer);
-        }
-
-        // GraphQL counts a review contribution once per person per PR.
-        for (const login of reviewers) {
-            const entry = activity.get(login);
-            if (entry !== undefined) entry.reviews += 1;
-        }
+    } catch (error) {
+        if (!isSkippableRepoError(error)) throw error;
+        context.warnings.push(`Could not read pull requests for ${repo.full_name}`);
     }
+};
 
-    // Issues opened in the window. This endpoint also returns pull requests.
-    const issuesPath = `/repos/${repo.full_name}/issues?state=all&sort=created&direction=desc&per_page=100`;
-    for await (const issue of client.paginateRest<IssueRest>(issuesPath)) {
-        if (timeOf(issue.created_at) < from) break;
-        if (issue.pull_request !== undefined) continue;
-        if (timeOf(issue.created_at) > to) continue;
+const scanIssues = async (plan: RepoPlan, context: ScanContext): Promise<void> => {
+    const { repo, extra, full } = plan;
+    const from = context.window.from.getTime();
+    const to = context.window.to.getTime();
+    const query = new URLSearchParams({
+        state: "all",
+        sort: "updated",
+        direction: "desc",
+        since: context.window.from.toISOString(),
+        per_page: "100",
+    });
+    const path = `/repos/${repo.full_name}/issues?${query.toString()}`;
 
-        const author = toRestUser(issue.user);
-        if (author === undefined) continue;
-        activityFor(activity, author).issues += 1;
+    try {
+        for await (const issue of context.client.paginateRest<IssueRest>(path)) {
+            if (timeOf(issue.updated_at) < from) break;
+            if (issue.pull_request !== undefined) continue;
+
+            const opener = toRestUser(issue.user);
+            const closer = toRestUser(issue.closed_by);
+            if (opener !== undefined) recordUser(context, opener);
+            if (closer !== undefined) recordUser(context, closer);
+
+            const createdAt = timeOf(issue.created_at);
+            const closedAt = issue.closed_at ? timeOf(issue.closed_at) : null;
+            const createdInWindow = createdAt >= from && createdAt <= to;
+            const closedInWindow = closedAt !== null && closedAt >= from && closedAt <= to;
+            const issueKey = `${repo.full_name}#${issue.number}`;
+            const openerLogin = opener?.login.toLowerCase();
+            const closerLogin = closer?.login.toLowerCase();
+
+            if (full !== null) {
+                if (createdInWindow && opener !== undefined && openerLogin !== undefined) {
+                    const key = `${issueKey}#${openerLogin}`;
+                    if (!context.seenFullIssues.has(key)) {
+                        context.seenFullIssues.add(key);
+                        addActivity(full, opener, "issues");
+                    }
+                }
+
+                if (closedInWindow && closer !== undefined && closerLogin !== undefined) {
+                    const key = `${issueKey}#${closerLogin}`;
+                    if (!context.seenFullIssues.has(key)) {
+                        context.seenFullIssues.add(key);
+                        addActivity(full, closer, "issues");
+                    }
+                }
+            }
+
+            // GraphQL already counted the opener when the issue was created in
+            // the window. Credit the closer only when that is a different act.
+            if (
+                extra !== null &&
+                closedInWindow &&
+                closer !== undefined &&
+                closerLogin !== undefined &&
+                (closerLogin !== openerLogin || !createdInWindow)
+            ) {
+                const key = `${issueKey}#${closerLogin}`;
+                if (!context.seenExtraIssues.has(key)) {
+                    context.seenExtraIssues.add(key);
+                    addActivity(extra, closer, "issues");
+                }
+            }
+        }
+    } catch (error) {
+        if (!isSkippableRepoError(error)) throw error;
+        context.warnings.push(`Could not read issues for ${repo.full_name}`);
     }
+};
+
+const scanPlan = async (plan: RepoPlan, context: ScanContext): Promise<void> => {
+    await scanExtraBranches(plan, context);
+    await scanPullRequests(plan, context);
+    await scanIssues(plan, context);
+};
+
+/**
+ * Reads every visible repository — forks included — across every branch. The
+ * first pass collects baseline SHAs and private fallback counts; the second
+ * pass adds non-default commits, late-closed PRs and solved issues. Splitting
+ * the passes keeps the baseline complete before any commit is called "extra".
+ */
+const scanRepos = async (
+    repos: RepoRest[],
+    window: TimeWindow,
+    privateContributionsVisible: boolean,
+    client: CollectorClient,
+    warnings: string[],
+): Promise<ScanResult> => {
+    const context: ScanContext = {
+        client,
+        window,
+        warnings,
+        users: new Map(),
+        publicExtra: new Map(),
+        privateExtra: new Map(),
+        privateFull: new Map(),
+        baselineCommits: new Set(),
+        seenExtraCommits: new Set(),
+        seenFullCommits: new Set(),
+        seenExtraPulls: new Set(),
+        seenFullPulls: new Set(),
+        seenFullReviews: new Set(),
+        seenFullIssues: new Set(),
+        seenExtraIssues: new Set(),
+        privateContributionsVisible,
+    };
+
+    const plans = await mapWithConcurrency(repos, SCAN_REPO_CONCURRENCY, async (repo) => {
+        try {
+            return await prepareRepo(repo, context);
+        } catch (error) {
+            if (!isSkippableRepoError(error)) throw error;
+            warnings.push(`Skipped repository ${repo.full_name}: ${errorDetail(error)}`);
+            return null;
+        }
+    });
+
+    const readablePlans = plans.filter((plan): plan is RepoPlan => plan !== null);
+    await mapWithConcurrency(readablePlans, SCAN_REPO_CONCURRENCY, async (plan) => {
+        try {
+            await scanPlan(plan, context);
+        } catch (error) {
+            if (!isSkippableRepoError(error)) throw error;
+            warnings.push(`Partially scanned ${plan.repo.full_name}: ${errorDetail(error)}`);
+        }
+    });
+
+    return {
+        users: context.users,
+        publicExtra: context.publicExtra,
+        privateExtra: context.privateExtra,
+        privateFull: context.privateFull,
+    };
 };
 
 /** True when the token's scope lets GraphQL include private contributions. */
@@ -546,47 +850,14 @@ const privateContributionsAreVisible = async (client: CollectorClient): Promise<
     }
 };
 
-const collectPrivateActivity = async (
-    repos: RepoRest[],
-    window: TimeWindow,
-    client: CollectorClient,
-): Promise<Map<string, PrivateActivity>> => {
-    const perRepo = await mapWithConcurrency(repos, PRIVATE_REPO_CONCURRENCY, async (repo) => {
-        const activity = new Map<string, PrivateActivity>();
-        try {
-            await countPrivateRepoActivity(repo, window, client, activity);
-        } catch (error) {
-            // One unreadable private repository must not fail the whole run.
-            if (!isSkippableRepoError(error)) throw error;
-        }
-        return activity;
-    });
-
-    const merged = new Map<string, PrivateActivity>();
-    for (const activity of perRepo) {
-        for (const [login, counts] of activity) {
-            const existing = merged.get(login);
-            if (existing === undefined) {
-                merged.set(login, { ...counts });
-                continue;
-            }
-            existing.commits += counts.commits;
-            existing.pullRequests += counts.pullRequests;
-            existing.reviews += counts.reviews;
-            existing.issues += counts.issues;
-        }
-    }
-    return merged;
-};
-
 /**
- * Adds private-repository counts to the GraphQL totals. Merging is by login
- * because direct REST reads do not share GraphQL's node-id key for every
- * contributor (for example, issue authors who never committed).
+ * Adds scanned counts to the GraphQL totals. Merging is by login because
+ * direct REST reads do not share GraphQL's node-id key for every contributor
+ * (for example, issue authors who never committed).
  */
-const mergePrivateActivity = (
+const mergeActivity = (
     contributors: RawContributor[],
-    activity: Map<string, PrivateActivity>,
+    activity: Map<string, ActivityCounts>,
 ): RawContributor[] => {
     const byLogin = new Map(contributors.map((entry) => [entry.login.toLowerCase(), entry]));
 
@@ -672,9 +943,16 @@ export const collectContributions = async (
     const org = await fetchOrgWithMembers(orgLogin, client);
     const window = resolveWindow(period, now, { orgCreatedAt: org.createdAt, customRange });
     const chunks = splitWindow(window);
+
+    // 2. Read every visible repository once. This discovers contributors that
+    //    the member/contributor lists miss and collects the activity GraphQL
+    //    cannot express: non-default branches, late-closed PRs and solved issues.
+    const privateVisible = await privateContributionsAreVisible(client);
+    const scan = await scanRepos(org.repos, window, privateVisible, client, warnings);
+
     const users: UserNode[] = [...org.members];
 
-    // 2. Outside collaborators via REST — GitHub exposes no GraphQL field for
+    // 3. Outside collaborators via REST — GitHub exposes no GraphQL field for
     //    them, and listing requires org ownership. A permission error is
     //    expected for non-owner tokens and is not a snapshot warning; any
     //    other failure is reported.
@@ -690,10 +968,13 @@ export const collectContributions = async (
         }
     } catch (error) {
         if (!isPermissionError(error)) {
-            const detail = error instanceof Error ? error.message : String(error);
-            warnings.push(`Outside collaborators unavailable: ${detail}`);
+            warnings.push(`Outside collaborators unavailable: ${errorDetail(error)}`);
         }
     }
+
+    // 4. Accounts seen in any repository are queried too, even when they are
+    //    not members, collaborators or commit contributors.
+    for (const user of scan.users.values()) users.push(user);
 
     // GitHub logins are globally unique across both sources; dedupe on them so
     // the same person is never counted twice. Bots are dropped before querying
@@ -706,7 +987,7 @@ export const collectContributions = async (
         ).values(),
     ];
 
-    // 3. Contributions, batched. Multi-year windows are queried one chunk at a
+    // 5. Contributions, batched. Multi-year windows are queried one chunk at a
     //    time and summed, because GitHub caps a single range at one year.
     const batches: UserNode[][] = [];
     for (let start = 0; start < uniqueUsers.length; start += BATCH_SIZE) {
@@ -773,14 +1054,14 @@ export const collectContributions = async (
 
     let contributors = batchContributors.flat();
 
-    // GitHub's contribution graph omits private activity unless the token has
-    // `read:user`. When private repositories are visible but that scope is
-    // missing, read them directly so private work is still ranked.
-    const privateRepos = org.repos.filter((repo) => repo.private && !repo.fork);
-    if (privateRepos.length > 0 && !(await privateContributionsAreVisible(client))) {
-        const privateActivity = await collectPrivateActivity(privateRepos, window, client);
-        contributors = mergePrivateActivity(contributors, privateActivity);
-    }
+    // 6. Add what GraphQL's contribution graph leaves out. Public repositories
+    //    always have GraphQL counts; private ones only when `read:user` is
+    //    available, otherwise the full direct scan is the only source.
+    contributors = mergeActivity(contributors, scan.publicExtra);
+    contributors = mergeActivity(
+        contributors,
+        privateVisible ? scan.privateExtra : scan.privateFull,
+    );
 
     return {
         contributors,

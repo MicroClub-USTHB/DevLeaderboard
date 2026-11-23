@@ -20,6 +20,7 @@
 | 9 | Frontend rebuild — default org, timeline selector, 202 auto-refresh, public forced refresh | ✅ done |
 | 10 | Docs & cleanup — READMEs, dependency pruning, final live verification | ✅ done |
 | 11 | Completeness — always union repo contributors, private-repo direct counting, token-scope docs | ✅ done |
+| 12 | All-branch/all-repo activity, solved issues, pagination, Premier-League rank zones | ✅ done |
 
 ## Original build (Phases 0–7)
 
@@ -105,8 +106,8 @@ failure into the generic `"GitHub is unavailable right now"` 502.
 
 **What changed**
 
-- **Default org:** `/` redirects to `/leaderboard/MicroClub-USTHB`. The header keeps a compact
-  "Switch org" field, so the app is not a dead end.
+- **Default org:** `/` redirects to `/leaderboard/MicroClub-USTHB`. The header is a plain wordmark;
+  the org switcher/search field was removed in Phase 12.
 - **Timeline selector:** **This month** / **All time** / **Custom range**. The custom option opens
   From/To date inputs with local validation (both dates, `from ≤ to`, `to ≤ today`, ≤366 days) and
   commits only on **Apply**, so typing never fires a request per keystroke.
@@ -163,7 +164,8 @@ commit or PR matching `malek`/`bz` in the org. Its only recent work is in person
   `read:user` scope (fine-grained tokens). The collector reads commits, PRs, reviews and issues
   from each private repo and merges them by login. With `read:user`, GitHub's
   `contributionsCollection` already includes private activity, so the direct scan is skipped to
-  avoid double counting. Forks are excluded from both paths.
+  avoid double counting. (Phase 12 superseded the non-fork restriction: the all-branch scan now
+  includes forks and deduplicates commits by SHA.)
 - **Token scopes documented** in both READMEs: classic `repo` + `read:org` + `read:user`, or a
   fine-grained token with access to the private repositories.
 
@@ -181,6 +183,56 @@ still sees **0** private repositories for `MicroClub-USTHB`, so `malek-bz09` rem
 the token is granted access to the private repository (fine-grained), or replaced with a classic
 PAT that has `repo` + `read:user`. The only visible activity for `malek-bz09` is outside the org
 (`maito-guy/wildfire-dz`: 2 commits, 22 PRs), which an org-scoped leaderboard does not count.
+
+### Phase 12 — All branches, all repos, pagination and rank zones
+
+**Request.** Count commits from every branch, and every PR, review and solved issue from every
+repository. Finish the UI work: remove the logo and search bar, add Premier-League-style top-four
+green / bottom-three red zones, and paginate the board.
+
+**What changed**
+
+- **All-branch commits.** Every visible repository is scanned branch by branch with
+  `/repos/{repo}/commits?sha={branch}&since=…&until=…`. Commit SHAs are deduplicated globally, and
+  commits reachable from the default or `gh-pages` branch are treated as the GraphQL baseline so
+  merged commits are not counted twice.
+- **All repositories, forks included.** The repository scan no longer filters forks. The two-pass
+  scan first records baseline SHAs, then adds non-default-branch commits, PRs closed/merged after
+  they were opened, and issues solved in the window.
+- **All PRs, reviews and solved issues.** PRs count when opened or closed/merged in the window;
+  reviews count once per reviewer per PR with no per-repo cap; issues credit the opener and/or the
+  closer, deduplicated per issue. The scan also discovers PR authors, reviewers and issue
+  participants who never appear in the commit-contributor list, so GraphQL is queried for them too.
+- **Private repositories.** With `read:user`, GraphQL supplies private activity and the scan adds
+  only the extras. Without it, the full all-branch scan of private repositories supplies every
+  metric.
+- **Pagination.** `GET /leaderboard/:org` accepts `offset` (0–100 000); the frontend requests 20
+  rows per page, keeps `page` in the URL, clamps out-of-range pages, and renders numbered pagination
+  with ellipses.
+- **Header cleanup.** The trophy logo and the "Switch org" search form are gone; only the
+  `DevLeaderboard` wordmark remains.
+- **Rank zones.** Ranks 1–4 get green row/card tints and badges; the bottom three ranks (when the
+  board has more than seven entries) get red tints and badges. The page shows a small legend.
+
+**Verification**
+
+- Temporary fake-client test (removed after passing): public and private-fallback paths produced
+  the same expected counts for baseline commits, non-default branch commits, late-closed PRs,
+  reviews and solved issues.
+- Backend `typecheck` ✅ · `build` ✅.
+- Frontend `typecheck` ✅ · `lint` ✅ · `build` ✅.
+- Live forced refresh: month **20** contributors, all-time **151** (was 12 / 97), with one expected
+  warning for the unresolvable deleted account `RITHVIK8374`. Month ≈ 136 s, all-time ≈ 567 s
+  because every branch and every PR review is now read.
+- Live pagination: all-time page 1 = ranks 1–20, page 2 = 21–40, page 8 = 141–151; `total` stays
+  151 and `count` is 20/20/11.
+- Headless Edge: no trophy/search form, "Top 4" and "Bottom 3" legend present, four green rows on
+  page 1, three red rows and badges on page 8, and "Page 8 of 8" pagination rendered.
+
+**Outcome.** The board now counts branch, PR, review and issue activity across every visible
+repository. `malek-bz09` is still absent because the only visible work for that account remains
+outside the organization; granting the token access to the private org repository is still the
+only way to include it.
 
 ## Stack decisions
 

@@ -15,6 +15,8 @@ export interface LeaderboardParams {
     org: string;
     period: Period;
     limit: number;
+    /** Ranked contributors to skip, for server-side pagination. */
+    offset: number;
     /** Only meaningful for `period: "custom"`. */
     from?: string;
     to?: string;
@@ -48,12 +50,14 @@ const leaderboardKey = (params: LeaderboardParams): readonly unknown[] => [
     params.period,
     rangeKeyOf(params),
     params.limit,
+    params.offset,
 ];
 
 const buildQuery = (params: LeaderboardParams): string => {
     const query = new URLSearchParams({
         period: params.period,
         limit: String(params.limit),
+        offset: String(params.offset),
     });
 
     if (params.period === "custom" && params.from !== undefined && params.to !== undefined) {

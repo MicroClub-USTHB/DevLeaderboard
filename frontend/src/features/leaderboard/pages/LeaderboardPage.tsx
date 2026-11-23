@@ -7,9 +7,10 @@ import { defaultCustomRange, validateRange, type DateRange } from "@/shared/lib/
 import { formatDate, formatRelativeTime } from "@/shared/lib/format";
 import { Button } from "@/shared/ui/Button";
 import { EmptyState, ErrorState, Skeleton } from "@/shared/ui/States";
-import { DEFAULT_LIMIT, DEFAULT_PERIOD, MAX_CUSTOM_DAYS } from "../constants";
+import { DEFAULT_PERIOD, MAX_CUSTOM_DAYS, PAGE_SIZE } from "../constants";
 import { useLeaderboard, useLeaderboardMeta, useRefresh } from "../api";
 import { MetaPanel } from "../components/MetaPanel";
+import { Pagination } from "../components/Pagination";
 import { RefreshButton } from "../components/RefreshButton";
 import { ScoreCards } from "../components/ScoreCards";
 import { ScoreTable } from "../components/ScoreTable";
@@ -19,10 +20,12 @@ import { TimelineSelector, type TimelineSelection } from "../components/Timeline
 const isPeriod = (value: string | null): value is Period =>
     value !== null && (PERIODS as readonly string[]).includes(value);
 
-const parseLimit = (value: string | null): number => {
+const MAX_PAGE = 5_000;
+
+const parsePage = (value: string | null): number => {
     const parsed = Number(value);
-    if (!Number.isInteger(parsed) || parsed < 1) return DEFAULT_LIMIT;
-    return Math.min(parsed, 100);
+    if (!Number.isInteger(parsed) || parsed < 1) return 1;
+    return Math.min(parsed, MAX_PAGE);
 };
 
 export const LeaderboardPage = (): ReactNode => {
@@ -34,7 +37,8 @@ export const LeaderboardPage = (): ReactNode => {
         : DEFAULT_PERIOD;
     const rawFrom = searchParams.get("from");
     const rawTo = searchParams.get("to");
-    const limit = parseLimit(searchParams.get("limit"));
+    const page = parsePage(searchParams.get("page"));
+    const offset = (page - 1) * PAGE_SIZE;
 
     // A valid range from the URL, or the default 30-day window for a bad one.
     const customRange = useMemo<DateRange | null>(() => {
@@ -66,7 +70,8 @@ export const LeaderboardPage = (): ReactNode => {
     const leaderboard = useLeaderboard({
         org,
         period,
-        limit,
+        limit: PAGE_SIZE,
+        offset,
         from: rangeFrom ?? undefined,
         to: rangeTo ?? undefined,
     });
@@ -104,6 +109,7 @@ export const LeaderboardPage = (): ReactNode => {
     const changeTimeline = (selection: TimelineSelection): void => {
         const params = new URLSearchParams(searchParams);
         params.set("period", selection.period);
+        params.delete("page");
 
         if (selection.period === "custom") {
             const range =
@@ -120,8 +126,35 @@ export const LeaderboardPage = (): ReactNode => {
         setSearchParams(params, { replace: true });
     };
 
+    const goToPage = (next: number): void => {
+        const params = new URLSearchParams(searchParams);
+        if (next <= 1) params.delete("page");
+        else params.set("page", String(next));
+
+        setSearchParams(params);
+        window.scrollTo({ top: 0, behavior: "smooth" });
+    };
+
     const retry = (): void => void leaderboard.refetch();
     const selectorRange = customRange ?? defaultCustomRange();
+
+    const snapshot =
+        leaderboard.data !== undefined && hasSnapshot(leaderboard.data) ? leaderboard.data : null;
+    const totalPages = snapshot === null ? 1 : Math.max(1, Math.ceil(snapshot.total / PAGE_SIZE));
+    const firstShown = snapshot === null || snapshot.entries.length === 0 ? 0 : offset + 1;
+    const lastShown = snapshot === null ? 0 : offset + snapshot.entries.length;
+
+    // Keep a hand-edited page number inside the real range. This also covers a
+    // refresh that shrinks the board below the current page.
+    useEffect(() => {
+        if (snapshot === null || page <= totalPages) return;
+
+        const params = new URLSearchParams(searchParams);
+        if (totalPages <= 1) params.delete("page");
+        else params.set("page", String(totalPages));
+
+        setSearchParams(params, { replace: true });
+    }, [snapshot, page, totalPages, searchParams, setSearchParams]);
 
     // Only surface a refresh failure for the selection that actually failed;
     // TanStack keeps `isError` until the next mutation starts.
@@ -159,22 +192,20 @@ export const LeaderboardPage = (): ReactNode => {
             </div>
 
             {/* Warnings from the last collection run — non-blocking by design. */}
-            {leaderboard.data !== undefined &&
-                hasSnapshot(leaderboard.data) &&
-                leaderboard.data.warnings.length > 0 && (
-                    <div className="flex items-start gap-2.5 rounded-lg border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-ink-muted">
-                        <AlertTriangle
-                            size={16}
-                            className="mt-0.5 shrink-0 text-warning"
-                            aria-hidden
-                        />
-                        <p>
-                            {leaderboard.data.warnings.length} warning
-                            {leaderboard.data.warnings.length > 1 ? "s" : ""} during the last
-                            refresh: {leaderboard.data.warnings.join(" · ")}
-                        </p>
-                    </div>
-                )}
+            {snapshot !== null && snapshot.warnings.length > 0 && (
+                <div className="flex items-start gap-2.5 rounded-lg border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-ink-muted">
+                    <AlertTriangle
+                        size={16}
+                        className="mt-0.5 shrink-0 text-warning"
+                        aria-hidden
+                    />
+                    <p>
+                        {snapshot.warnings.length} warning
+                        {snapshot.warnings.length > 1 ? "s" : ""} during the last refresh:{" "}
+                        {snapshot.warnings.join(" · ")}
+                    </p>
+                </div>
+            )}
 
             {/* States */}
             {leaderboard.isPending ? (
@@ -198,7 +229,7 @@ export const LeaderboardPage = (): ReactNode => {
                         </Button>
                     }
                 />
-            ) : leaderboard.data !== undefined && hasSnapshot(leaderboard.data) ? (
+            ) : snapshot !== null ? (
                 <>
                     {/* Refresh failed but a snapshot is cached: keep serving it. */}
                     {leaderboard.isError && (
@@ -213,16 +244,33 @@ export const LeaderboardPage = (): ReactNode => {
                         />
                     )}
 
-                    <p className="text-sm text-ink-faint">
-                        Updated {formatRelativeTime(leaderboard.data.generatedAt)} ·{" "}
-                        {formatDate(leaderboard.data.windowFrom)} –{" "}
-                        {formatDate(leaderboard.data.windowTo)} · showing{" "}
-                        <span className="text-ink-muted tabular">{leaderboard.data.count}</span> of{" "}
-                        <span className="text-ink-muted tabular">{leaderboard.data.total}</span>{" "}
-                        contributors
-                    </p>
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <p className="text-sm text-ink-faint">
+                            Updated {formatRelativeTime(snapshot.generatedAt)} ·{" "}
+                            {formatDate(snapshot.windowFrom)} – {formatDate(snapshot.windowTo)} ·
+                            showing{" "}
+                            <span className="text-ink-muted tabular">
+                                {firstShown === 0 ? 0 : `${firstShown}–${lastShown}`}
+                            </span>{" "}
+                            of <span className="text-ink-muted tabular">{snapshot.total}</span>{" "}
+                            contributors
+                        </p>
 
-                    {leaderboard.data.entries.length === 0 ? (
+                        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ink-faint">
+                            <span className="inline-flex items-center gap-1.5">
+                                <span className="size-2 rounded-full bg-success" aria-hidden />
+                                Top 4
+                            </span>
+                            {snapshot.total > 7 && (
+                                <span className="inline-flex items-center gap-1.5">
+                                    <span className="size-2 rounded-full bg-danger" aria-hidden />
+                                    Bottom 3
+                                </span>
+                            )}
+                        </div>
+                    </div>
+
+                    {snapshot.entries.length === 0 ? (
                         <EmptyState
                             icon={<Inbox size={20} />}
                             title="No activity in this period"
@@ -230,8 +278,13 @@ export const LeaderboardPage = (): ReactNode => {
                         />
                     ) : (
                         <>
-                            <ScoreTable entries={leaderboard.data.entries} />
-                            <ScoreCards entries={leaderboard.data.entries} />
+                            <ScoreTable entries={snapshot.entries} total={snapshot.total} />
+                            <ScoreCards entries={snapshot.entries} total={snapshot.total} />
+                            <Pagination
+                                page={page}
+                                totalPages={totalPages}
+                                onChange={goToPage}
+                            />
                         </>
                     )}
                 </>
@@ -261,7 +314,7 @@ export const LeaderboardPage = (): ReactNode => {
                     title="Preparing this leaderboard"
                     description={
                         refresh.isPending
-                            ? "Collecting contributions from GitHub. All-time and multi-month ranges can take up to a minute."
+                            ? "Collecting every branch, PR, review and issue from GitHub. All-time and multi-month ranges can take several minutes."
                             : "No snapshot exists for this period yet. Start a refresh to build it."
                     }
                     action={

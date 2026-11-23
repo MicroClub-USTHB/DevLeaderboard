@@ -3,11 +3,10 @@ import type { Period } from "@/shared/api/types";
 export const DEFAULT_PERIOD: Period = "month";
 
 /**
- * The API caps `limit` at 100. Request the maximum so a typical organization's
- * all-time board is not silently truncated (the page still shows "N of M" if
- * an organization ever exceeds it).
+ * Rows per page. The API caps `limit` at 100; paging through `offset` lets the
+ * UI reach every contributor even when an organization exceeds that cap.
  */
-export const DEFAULT_LIMIT = 100;
+export const PAGE_SIZE = 20;
 
 /** Mirrors the backend's cap so the picker rejects oversized ranges locally. */
 export const MAX_CUSTOM_DAYS = 366;

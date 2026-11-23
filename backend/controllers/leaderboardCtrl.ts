@@ -40,6 +40,7 @@ const dateKey = z
 const listQuery = z.object({
     period: z.enum(PERIODS).default("month"),
     limit: z.coerce.number().int().min(1).max(100).default(50),
+    offset: z.coerce.number().int().min(0).max(100_000).default(0),
     from: dateKey.optional(),
     to: dateKey.optional(),
 });
@@ -145,7 +146,7 @@ const toHttpError = (error: GitHubError, res: Response): HttpError => {
 
 export const getLeaderboard = async (req: Request, res: Response): Promise<void> => {
     const { org } = orgParams.parse(req.params);
-    const { period, limit, from, to } = listQuery.parse(req.query);
+    const { period, limit, offset, from, to } = listQuery.parse(req.query);
     const { rangeKey } = parseRange(period, from, to);
 
     const snapshot = await findSnapshot(org, period, rangeKey);
@@ -161,10 +162,10 @@ export const getLeaderboard = async (req: Request, res: Response): Promise<void>
         return;
     }
 
-    const entries = snapshot.contributors.slice(0, limit);
+    const entries = snapshot.contributors.slice(offset, offset + limit);
     // Varies with the data, the projection and the range, so a stale list is
     // never cached.
-    const etag = `W/"${snapshot.generatedAt.getTime()}-${snapshot.contributors.length}-${limit}-${rangeKey}"`;
+    const etag = `W/"${snapshot.generatedAt.getTime()}-${snapshot.contributors.length}-${limit}-${offset}-${rangeKey}"`;
 
     res.set("ETag", etag);
     if (req.fresh) {
