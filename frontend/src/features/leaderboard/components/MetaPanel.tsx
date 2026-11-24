@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import type { LeaderboardMeta, SnapshotSummary } from "@/shared/api/types";
-import { formatDateTime, formatNumber, formatRelativeTime } from "@/shared/lib/format";
+import { formatNumber, formatRelativeTime } from "@/shared/lib/format";
 import { PERIOD_LABELS } from "../constants";
 
 interface MetaPanelProps {
@@ -16,18 +16,14 @@ const snapshotLabel = (snapshot: SnapshotSummary): string => {
 };
 
 /**
- * Secondary info: how scoring works, how fresh each snapshot is, and how much
- * GitHub quota the last call consumed. Read-only context, never blocking.
+ * Secondary info: how scoring works and how fresh each snapshot is.
+ * Read-only context, never blocking.
  */
 export const MetaPanel = ({ meta }: MetaPanelProps): ReactNode => {
-    const { rateLimit, scoreWeights, snapshots } = meta;
-    const quotaPercent =
-        rateLimit?.limit !== undefined && rateLimit.remaining !== undefined
-            ? Math.round((rateLimit.remaining / rateLimit.limit) * 100)
-            : null;
+    const { scoreWeights, snapshots } = meta;
 
     return (
-        <section className="grid gap-4 rounded-xl border border-line bg-surface p-5 sm:grid-cols-3">
+        <section className="grid gap-4 rounded-xl border border-line bg-surface p-5 sm:grid-cols-2">
             <div>
                 <h2 className="text-xs font-medium uppercase tracking-wide text-ink-faint">
                     Score weights
@@ -75,51 +71,6 @@ export const MetaPanel = ({ meta }: MetaPanelProps): ReactNode => {
                             </div>
                         ))}
                     </dl>
-                )}
-            </div>
-
-            <div>
-                <h2 className="text-xs font-medium uppercase tracking-wide text-ink-faint">
-                    GitHub quota
-                </h2>
-                {rateLimit === null || rateLimit === undefined ? (
-                    <p className="mt-3 text-sm text-ink-faint">No GitHub call made yet.</p>
-                ) : (
-                    <div className="mt-3 space-y-2 text-sm">
-                        <p className="text-ink-muted">
-                            <span className="font-medium text-ink tabular">
-                                {formatNumber(rateLimit.remaining ?? 0)}
-                            </span>
-                            <span className="text-ink-faint">
-                                {" "}
-                                of {formatNumber(rateLimit.limit ?? 0)} left
-                            </span>
-                        </p>
-                        {quotaPercent !== null && (
-                            <div
-                                className="h-1.5 overflow-hidden rounded-full bg-overlay"
-                                role="progressbar"
-                                aria-valuenow={quotaPercent}
-                                aria-valuemin={0}
-                                aria-valuemax={100}
-                                aria-label="GitHub quota remaining"
-                            >
-                                <div
-                                    className={
-                                        quotaPercent > 25
-                                            ? "h-full rounded-full bg-accent-500"
-                                            : "h-full rounded-full bg-danger"
-                                    }
-                                    style={{ width: `${quotaPercent}%` }}
-                                />
-                            </div>
-                        )}
-                        {rateLimit.resetAt !== undefined && (
-                            <p className="text-xs text-ink-faint">
-                                Resets {formatDateTime(rateLimit.resetAt)}
-                            </p>
-                        )}
-                    </div>
                 )}
             </div>
         </section>

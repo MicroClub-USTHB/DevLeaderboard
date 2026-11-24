@@ -20,10 +20,5 @@ export const AppLayout = (): ReactNode => (
             <Outlet />
         </main>
 
-        <footer className="border-t border-line">
-            <div className="mx-auto w-full max-w-6xl px-4 py-6 text-sm text-ink-faint sm:px-6">
-                DevLeaderboard — contribution rankings, refreshed from GitHub.
-            </div>
-        </footer>
     </div>
 );

@@ -7,7 +7,6 @@ import {
     findSnapshotSummaries,
 } from "../models/leaderboardSnapshot.js";
 import { GitHubError } from "../services/github/errors.js";
-import { githubClient } from "../services/github/githubClient.js";
 import {
     MAX_CUSTOM_DAYS,
     PERIODS,
@@ -16,6 +15,7 @@ import {
     type CustomRange,
     type Period,
 } from "../services/leaderboard/periods.js";
+import { requestRefresh } from "../services/leaderboard/backgroundRefresh.js";
 import { syncLeaderboard } from "../services/leaderboard/sync.js";
 import type { SyncResult } from "../services/leaderboard/types.js";
 
@@ -147,9 +147,12 @@ const toHttpError = (error: GitHubError, res: Response): HttpError => {
 export const getLeaderboard = async (req: Request, res: Response): Promise<void> => {
     const { org } = orgParams.parse(req.params);
     const { period, limit, offset, from, to } = listQuery.parse(req.query);
-    const { rangeKey } = parseRange(period, from, to);
+    const { rangeKey, customRange } = parseRange(period, from, to);
 
     const snapshot = await findSnapshot(org, period, rangeKey);
+
+    // Readers always get what is stored; refreshing happens in the background.
+    requestRefresh(org, period, customRange);
 
     if (snapshot === null) {
         // Not a failure: the schedule simply has not produced this yet.
@@ -157,7 +160,7 @@ export const getLeaderboard = async (req: Request, res: Response): Promise<void>
             org: org.toLowerCase(),
             period,
             rangeKey,
-            message: "No snapshot yet, trigger a refresh or wait for the scheduled run",
+            message: "No snapshot yet, it is being built",
         });
         return;
     }
@@ -182,7 +185,6 @@ export const getLeaderboard = async (req: Request, res: Response): Promise<void>
         windowTo: snapshot.windowTo,
         total: snapshot.contributors.length,
         count: entries.length,
-        warnings: snapshot.warnings,
         entries,
     });
 };
@@ -191,15 +193,12 @@ export const getLeaderboardMeta = async (req: Request, res: Response): Promise<v
     const { org } = orgParams.parse(req.params);
 
     const snapshots = await findSnapshotSummaries(org);
-    // Reports only what the last GitHub response carried; never throws.
-    const rateLimit = githubClient.getRateLimit();
     const orgCreatedAt = snapshots[0]?.orgCreatedAt ?? null;
 
     res.status(200).json({
         org: org.toLowerCase(),
         orgCreatedAt,
         scoreWeights: config.Score,
-        rateLimit: rateLimit ?? null,
         snapshots,
     });
 };

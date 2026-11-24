@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, type ReactNode } from "react";
+import { useEffect, useMemo, type ReactNode } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
-import { AlertTriangle, Inbox, RefreshCw } from "lucide-react";
+import { Inbox, RefreshCw } from "lucide-react";
 import { ApiError } from "@/shared/api/client";
 import { hasSnapshot, PERIODS, type Period } from "@/shared/api/types";
 import { defaultCustomRange, validateRange, type DateRange } from "@/shared/lib/dates";
@@ -8,10 +8,8 @@ import { formatDate, formatRelativeTime } from "@/shared/lib/format";
 import { Button } from "@/shared/ui/Button";
 import { EmptyState, ErrorState, Skeleton } from "@/shared/ui/States";
 import { DEFAULT_PERIOD, MAX_CUSTOM_DAYS, PAGE_SIZE } from "../constants";
-import { useLeaderboard, useLeaderboardMeta, useRefresh } from "../api";
-import { MetaPanel } from "../components/MetaPanel";
+import { useLeaderboard } from "../api";
 import { Pagination } from "../components/Pagination";
-import { RefreshButton } from "../components/RefreshButton";
 import { ScoreCards } from "../components/ScoreCards";
 import { ScoreTable } from "../components/ScoreTable";
 import { StaleDataBanner } from "../components/StaleDataBanner";
@@ -75,36 +73,6 @@ export const LeaderboardPage = (): ReactNode => {
         from: rangeFrom ?? undefined,
         to: rangeTo ?? undefined,
     });
-    const meta = useLeaderboardMeta(org);
-    const refresh = useRefresh(org);
-
-    // Identifies "this org + period + range", so an auto-refresh never fires
-    // twice for the same selection and never leaks across org switches. A ref
-    // may only be touched inside effects or event handlers, never during render.
-    const requestKey = `${org.toLowerCase()}:${period}:${rangeFrom ?? ""}:${rangeTo ?? ""}`;
-    const autoRefreshRef = useRef<string | null>(null);
-
-    const handleRefresh = (): void => {
-        refresh.mutate({
-            period,
-            from: rangeFrom ?? undefined,
-            to: rangeTo ?? undefined,
-        });
-    };
-
-    // A 202 means no snapshot exists yet: start the first collection once.
-    useEffect(() => {
-        const data = leaderboard.data;
-        if (data === undefined || hasSnapshot(data)) return;
-        if (autoRefreshRef.current === requestKey) return;
-
-        autoRefreshRef.current = requestKey;
-        refresh.mutate({
-            period,
-            from: rangeFrom ?? undefined,
-            to: rangeTo ?? undefined,
-        });
-    }, [leaderboard.data, requestKey, period, rangeFrom, rangeTo, refresh]);
 
     const changeTimeline = (selection: TimelineSelection): void => {
         const params = new URLSearchParams(searchParams);
@@ -156,16 +124,6 @@ export const LeaderboardPage = (): ReactNode => {
         setSearchParams(params, { replace: true });
     }, [snapshot, page, totalPages, searchParams, setSearchParams]);
 
-    // Only surface a refresh failure for the selection that actually failed;
-    // TanStack keeps `isError` until the next mutation starts.
-    const failedVariables = refresh.variables;
-    const refreshFailed =
-        refresh.isError &&
-        failedVariables !== undefined &&
-        `${org.toLowerCase()}:${failedVariables.period ?? ""}:${failedVariables.from ?? ""}:${
-            failedVariables.to ?? ""
-        }` === requestKey;
-
     return (
         <div className="space-y-6">
             {/* Header */}
@@ -183,29 +141,8 @@ export const LeaderboardPage = (): ReactNode => {
                         to={selectorRange.to}
                         onChange={changeTimeline}
                     />
-                    <RefreshButton
-                        label="Refresh"
-                        onRefresh={handleRefresh}
-                        busy={refresh.isPending}
-                    />
                 </div>
             </div>
-
-            {/* Warnings from the last collection run — non-blocking by design. */}
-            {snapshot !== null && snapshot.warnings.length > 0 && (
-                <div className="flex items-start gap-2.5 rounded-lg border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-ink-muted">
-                    <AlertTriangle
-                        size={16}
-                        className="mt-0.5 shrink-0 text-warning"
-                        aria-hidden
-                    />
-                    <p>
-                        {snapshot.warnings.length} warning
-                        {snapshot.warnings.length > 1 ? "s" : ""} during the last refresh:{" "}
-                        {snapshot.warnings.join(" · ")}
-                    </p>
-                </div>
-            )}
 
             {/* States */}
             {leaderboard.isPending ? (
@@ -288,49 +225,22 @@ export const LeaderboardPage = (): ReactNode => {
                         </>
                     )}
                 </>
-            ) : leaderboard.data !== undefined && refreshFailed ? (
-                <ErrorState
-                    title="Couldn't build this leaderboard"
-                    description={
-                        refresh.error instanceof ApiError
-                            ? refresh.error.message
-                            : "GitHub could not be reached. Please try again."
-                    }
-                    action={
-                        <Button variant="secondary" onClick={handleRefresh}>
-                            <RefreshCw size={15} aria-hidden />
-                            Try again
-                        </Button>
-                    }
-                />
             ) : leaderboard.data !== undefined ? (
                 <EmptyState
                     icon={
                         <RefreshCw
                             size={20}
-                            className={refresh.isPending ? "animate-spin" : undefined}
+                            className="animate-spin"
                         />
                     }
                     title="Preparing this leaderboard"
-                    description={
-                        refresh.isPending
-                            ? "Collecting every branch, PR, review and issue from GitHub. All-time and multi-month ranges can take several minutes."
-                            : "No snapshot exists for this period yet. Start a refresh to build it."
-                    }
-                    action={
-                        <RefreshButton
-                            label="Refresh now"
-                            onRefresh={handleRefresh}
-                            busy={refresh.isPending}
-                        />
-                    }
+                    description="Collecting data from GitHub. This page updates on its own when it is ready. All-time and multi-month ranges can take several minutes."
                 />
             ) : (
                 // Should be unreachable: isPending | isError | data are exhaustive.
                 <ErrorState title="Something went wrong" description="Please try again." />
             )}
 
-            {meta.data !== undefined && <MetaPanel meta={meta.data} />}
         </div>
     );
 };
