@@ -56,6 +56,10 @@ function loadConfig(): Config {
                 .split(",")
                 .map((entry) => entry.trim())
                 .filter((entry) => entry.length > 0),
+            ExtraRepos: (process.env.LEADERBOARD_EXTRA_REPOS ?? defaults.LEADERBOARD_EXTRA_REPOS)
+                .split(",")
+                .map((entry) => entry.trim())
+                .filter((entry) => entry.length > 0),
         },
         Log: {
             Level: process.env.LOG_LEVEL ?? defaults.LOG_LEVEL,

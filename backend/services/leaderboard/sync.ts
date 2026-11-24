@@ -6,7 +6,7 @@ import {
     type SnapshotInput,
 } from "../../models/leaderboardSnapshot.js";
 import { aggregate } from "./aggregator.js";
-import { collectContributions } from "./collector.js";
+import { collectContributions, type CollectorClient } from "./collector.js";
 import { rangeKeyFor, type CustomRange, type Period } from "./periods.js";
 import type { CollectResult, SyncResult } from "./types.js";
 
@@ -29,7 +29,29 @@ type CollectFn = (
     period: Period,
     now: Date,
     customRange?: CustomRange,
+    client?: CollectorClient,
+    extraRepos?: readonly string[],
 ) => Promise<CollectResult>;
+
+/**
+ * `LEADERBOARD_EXTRA_REPOS` is written as `org=owner/repo`. Only entries that
+ * belong to the requested organization are passed to the collector.
+ */
+const extraReposFor = (orgLogin: string): string[] => {
+    const target = orgLogin.toLowerCase();
+    const repos: string[] = [];
+
+    for (const entry of config.Leaderboard.ExtraRepos) {
+        const separator = entry.indexOf("=");
+        if (separator <= 0) continue;
+
+        const org = entry.slice(0, separator).trim().toLowerCase();
+        const repo = entry.slice(separator + 1).trim();
+        if (org === target && repo.length > 0) repos.push(repo);
+    }
+
+    return repos;
+};
 
 type FindFn = (
     orgLogin: string,
@@ -92,6 +114,8 @@ const runSync = async (
         period,
         now,
         options.customRange,
+        undefined,
+        extraReposFor(orgLogin),
     );
     const entries = aggregate(contributors, config.Score);
 

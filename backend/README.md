@@ -51,6 +51,12 @@ works in a private repository the token cannot access, they will not appear. Gra
 to those repositories (fine-grained: *Contents: Read*, *Metadata: Read*, *Pull requests: Read*,
 *Issues: Read*), or use a classic PAT with `repo` + `read:user`.
 
+**External projects.** Club work that lives outside the organization can be added with
+`LEADERBOARD_EXTRA_REPOS=org=owner/repo` (comma-separated for several). The repository is resolved
+through GraphQL, marked external, and scanned in full: every branch, PR, review and issue is counted
+directly because `contributionsCollection(organizationID:)` never includes it. Commit SHAs already
+seen in an organization repository are skipped, so a fork or mirror cannot double-count history.
+
 Configuration is validated with zod at startup: the process refuses to boot with a missing
 `GITHUB_TOKEN`, an invalid `LEADERBOARD_CRON` expression, half-configured database credentials, or
 an unknown `LOG_LEVEL`.
@@ -77,6 +83,7 @@ an unknown `LOG_LEVEL`.
 | `SCORE_ISSUE` | `2` | Score weight per issue opened or solved in the window |
 | `LEADERBOARD_CRON` | `0 */6 * * *` | 5-field cron expression (server timezone) |
 | `LEADERBOARD_ORGS` | `MicroClub-USTHB` | Comma-separated org logins to refresh automatically. Empty = scheduler off |
+| `LEADERBOARD_EXTRA_REPOS` | *(empty)* | Extra projects counted per org, as `org=owner/repo` (comma-separated) |
 | `LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error` — one JSON object per line |
 
 ---
@@ -295,6 +302,10 @@ Key decisions:
   `contributionsCollection` already includes private activity, so only the extras are merged.
   Without it (fine-grained tokens), the full all-branch scan of private repositories supplies every
   metric, so private work is still ranked instead of silently disappearing.
+- **External projects:** repositories named in `LEADERBOARD_EXTRA_REPOS` are resolved through
+  GraphQL and marked `external`. They are scanned only after every organization repository, so the
+  complete org commit set can suppress duplicate SHAs. Their activity is always merged from the
+  direct scan because the organization-scoped contribution graph cannot see them.
 - **Resilient collection:** bot logins are dropped before querying, and a single unresolvable login
   is retried alone and skipped instead of failing the batch.
 - **Security:** helmet, per-IP refresh rate limiting, credential redaction in logs, query strings

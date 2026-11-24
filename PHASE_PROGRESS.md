@@ -234,6 +234,46 @@ repository. `malek-bz09` is still absent because the only visible work for that 
 outside the organization; granting the token access to the private org repository is still the
 only way to include it.
 
+### Phase 13 — External project allowlist (`malek-bz09`)
+
+**Request.** `malek-bz09` was still missing "even in dev branch".
+
+**Investigation.** The account has no public org membership and no commits, PRs, reviews or issues
+in any `MicroClub-USTHB` repository, including every branch named `dev`/`develop`. Its public event
+stream is entirely `maito-guy/wildfire-dz` (a personal repository), where it pushed repeatedly to
+`dev` and several feature branches. The account's email is
+`abdelmalek.aidoussi@etu.usthb.dz`, and its `dev` commits are correctly linked to `malek-bz09`, so
+this was a scope problem, not an attribution problem.
+
+**What changed**
+
+- **`LEADERBOARD_EXTRA_REPOS`.** New comma-separated setting, written as `org=owner/repo`. Entries
+  are validated at boot and filtered per organization.
+- **External repositories are resolved through GraphQL** and marked `external`.
+- **Full direct scan for external repos.** Because `contributionsCollection(organizationID:)` never
+  includes them, every metric comes from the scan: all branches, PRs opened or closed/merged in the
+  window, every review, and issues opened or solved.
+- **No duplicate history.** Organization repositories are scanned first, and every org commit SHA is
+  recorded. An external fork or mirror skips those SHAs, so shared history is counted once.
+- **Local configuration.** `backend/config/.env` sets
+  `LEADERBOARD_EXTRA_REPOS=MicroClub-USTHB=maito-guy/wildfire-dz`; the setting is documented in
+  `.env.example` and both READMEs.
+
+**Verification**
+
+- Backend `typecheck` ✅ · `build` ✅; frontend `typecheck` ✅ · `lint` ✅ · `build` ✅.
+- Forced month refresh: **22** contributors (was 20), **≈122 s**. `malek-bz09` enters at **rank 2**
+  with **63 commits, 22 PRs, 0 reviews, 42 issues, score 619**; `maito-guy` enters at rank 5.
+- Forced all-time refresh: **153** contributors (was 151), **≈528 s**. `malek-bz09` is **rank 13**
+  with the same counts; `maito-guy` is rank 30.
+- The 42 issues match GitHub: 37 opened by `malek-bz09` and 42 closed by him, deduplicated per
+  issue.
+- Headless Edge on the month board rendered `2 malek-bz09 63 22 0 42 619`.
+- Existing org-only rankings are unchanged apart from the merged external activity.
+
+**Outcome.** Club work hosted in a personal repository can now be counted explicitly. Without the
+allowlist entry the board stays strictly organization-scoped.
+
 ## Stack decisions
 
 - Dark-only theme, deep-blue accent on zinc surfaces, all colors as `@theme` roles

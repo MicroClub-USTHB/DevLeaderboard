@@ -86,6 +86,12 @@ merge that makes the same commit reachable from several branches is counted once
 If a contributor works in a private repository the token cannot access, they cannot appear on the
 board. Grant the token access to those repositories, or use a classic PAT with `repo` + `read:user`.
 
+Club work sometimes lives in a personal repository. Add it explicitly with
+`LEADERBOARD_EXTRA_REPOS=org=owner/repo` (comma-separated for several projects). Those repositories
+are scanned in full — every branch, PR, review and issue — and merged into the same board. For
+example, `LEADERBOARD_EXTRA_REPOS=MicroClub-USTHB=maito-guy/wildfire-dz` counts that project on the
+`MicroClub-USTHB` leaderboard.
+
 ### Production build
 
 ```bash
@@ -128,8 +134,10 @@ frontend/
    every branch, discovers contributors from commits, PRs, reviews and issues, then queries
    `contributionsCollection` in batches for the contribution-graph baseline. A direct repository
    scan adds what GraphQL leaves out: non-default-branch commits, PRs closed/merged after they were
-   opened, and issues solved by someone other than the opener. Multi-year windows are split into
-   ≤364-day chunks because GitHub caps a single range at one year.
+   opened, and issues solved by someone other than the opener. Any repository listed in
+   `LEADERBOARD_EXTRA_REPOS` is scanned the same way and merged in, even though it is outside the
+   organization. Multi-year windows are split into ≤364-day chunks because GitHub caps a single
+   range at one year.
 2. **Score** — commits, pull requests, reviews and issues are weighted into one number; ties break
    deterministically. Bots and zero-activity members are dropped.
 3. **Cache** — the ranked list is stored per organization, period and range, with `generatedAt`,

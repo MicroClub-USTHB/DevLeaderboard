@@ -132,7 +132,34 @@ interface RepoRest {
     fork: boolean;
     private: boolean;
     default_branch: string;
+    /**
+     * An explicitly allowed project outside the organization. GraphQL's
+     * organization-scoped contribution graph never counts these, so their
+     * activity is always read directly.
+     */
+    external?: boolean;
 }
+
+interface ExtraRepoNode {
+    nameWithOwner: string;
+    isPrivate: boolean;
+    isFork: boolean;
+    defaultBranchRef: { name: string } | null;
+}
+
+interface ExtraRepoResponse {
+    repository: ExtraRepoNode | null;
+}
+
+const EXTRA_REPO_QUERY = `
+query ($owner: String!, $name: String!) {
+  repository(owner: $owner, name: $name) {
+    nameWithOwner
+    isPrivate
+    isFork
+    defaultBranchRef { name }
+  }
+}`;
 
 /** What GraphQL actually sends over the wire for a connection field. */
 interface NodesPage<T> {
@@ -312,6 +339,77 @@ const fetchRepoContributors = async (
     return users;
 };
 
+/**
+ * Resolves explicitly allowed projects outside the organization. They are
+ * marked `external` so the scan reads every metric directly: GraphQL's
+ * organization-scoped contribution graph cannot see them.
+ */
+const fetchExtraRepos = async (
+    fullNames: readonly string[],
+    client: CollectorClient,
+    warnings: string[],
+): Promise<RepoRest[]> => {
+    const results = await mapWithConcurrency(
+        fullNames,
+        REPO_CONCURRENCY,
+        async (fullName): Promise<RepoRest | null> => {
+            const slash = fullName.indexOf("/");
+            if (slash <= 0 || slash === fullName.length - 1) {
+                warnings.push(`Ignored extra repository "${fullName}": expected owner/repo`);
+                return null;
+            }
+
+            const owner = fullName.slice(0, slash);
+            const name = fullName.slice(slash + 1);
+
+            try {
+                const data = await client.graphql<ExtraRepoResponse>(EXTRA_REPO_QUERY, {
+                    owner,
+                    name,
+                });
+                const repo = data.repository;
+                if (repo === null) {
+                    warnings.push(`Extra repository not found: ${fullName}`);
+                    return null;
+                }
+
+                return {
+                    full_name: repo.nameWithOwner,
+                    fork: repo.isFork,
+                    private: repo.isPrivate,
+                    default_branch: repo.defaultBranchRef?.name ?? "main",
+                    external: true,
+                };
+            } catch (error) {
+                if (isSkippableRepoError(error)) {
+                    warnings.push(
+                        `Could not read extra repository ${fullName}: ${errorDetail(error)}`,
+                    );
+                    return null;
+                }
+                throw error;
+            }
+        },
+    );
+
+    return results.filter((repo): repo is RepoRest => repo !== null);
+};
+
+/** Organization repos win when an extra repo is also owned by the org. */
+const mergeRepos = (orgRepos: RepoRest[], extraRepos: RepoRest[]): RepoRest[] => {
+    const merged = [...orgRepos];
+    const seen = new Set(orgRepos.map((repo) => repo.full_name.toLowerCase()));
+
+    for (const repo of extraRepos) {
+        const key = repo.full_name.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        merged.push(repo);
+    }
+
+    return merged;
+};
+
 const toOrgDate = (value: string, orgLogin: string): Date => {
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) {
@@ -327,6 +425,8 @@ const toOrgDate = (value: string, orgLogin: string): Date => {
 const fetchOrgWithMembers = async (
     orgLogin: string,
     client: CollectorClient,
+    extraRepos: readonly string[] = [],
+    warnings: string[] = [],
 ): Promise<OrgWithMembers> => {
     let memberResult: { org: OrgNode; members: UserNode[] };
 
@@ -339,10 +439,12 @@ const fetchOrgWithMembers = async (
         // public profile, the public member list and every public repository.
         // Union both sources so private members are not silently dropped.
         const org = await fetchOrgIdentity(orgLogin, client);
-        const [publicMembers, repos] = await Promise.all([
+        const [publicMembers, orgRepos] = await Promise.all([
             fetchPublicMembers(orgLogin, client),
             fetchOrgRepos(orgLogin, client),
         ]);
+        const extras = await fetchExtraRepos(extraRepos, client, warnings);
+        const repos = mergeRepos(orgRepos, extras);
         const repoContributors = await fetchRepoContributors(repos, client);
 
         return {
@@ -356,7 +458,9 @@ const fetchOrgWithMembers = async (
     }
 
     const { org, members } = memberResult;
-    const repos = await fetchOrgRepos(orgLogin, client);
+    const orgRepos = await fetchOrgRepos(orgLogin, client);
+    const extras = await fetchExtraRepos(extraRepos, client, warnings);
+    const repos = mergeRepos(orgRepos, extras);
 
     // The member list alone is not enough: someone can contribute to an
     // organization repository without being a member or an outside
@@ -461,6 +565,8 @@ interface ScanResult {
     privateExtra: Map<string, ActivityCounts>;
     /** Full activity of private repositories when GraphQL cannot see them. */
     privateFull: Map<string, ActivityCounts>;
+    /** Full activity of explicitly allowed repositories outside the org. */
+    externalFull: Map<string, ActivityCounts>;
 }
 
 interface ScanContext {
@@ -471,10 +577,14 @@ interface ScanContext {
     publicExtra: Map<string, ActivityCounts>;
     privateExtra: Map<string, ActivityCounts>;
     privateFull: Map<string, ActivityCounts>;
+    externalFull: Map<string, ActivityCounts>;
     /** Commits reachable from a default/gh-pages branch, already counted by GraphQL. */
     baselineCommits: Set<string>;
+    /** Every commit seen in an organization repo, across all branches. */
+    orgCommits: Set<string>;
     seenExtraCommits: Set<string>;
     seenFullCommits: Set<string>;
+    seenExternalCommits: Set<string>;
     seenExtraPulls: Set<string>;
     seenFullPulls: Set<string>;
     seenFullReviews: Set<string>;
@@ -571,19 +681,36 @@ const prepareRepo = async (repo: RepoRest, context: ScanContext): Promise<RepoPl
     const baselineBranches = new Set<string>([repo.default_branch]);
     if (names.has("gh-pages")) baselineBranches.add("gh-pages");
 
-    const useFull = repo.private && !context.privateContributionsVisible;
+    const external = repo.external === true;
+    const useFull = external || (repo.private && !context.privateContributionsVisible);
     const extra = useFull ? null : repo.private ? context.privateExtra : context.publicExtra;
-    const full = useFull ? context.privateFull : null;
+    const full = useFull ? (external ? context.externalFull : context.privateFull) : null;
 
     await mapWithConcurrency([...baselineBranches], BRANCH_CONCURRENCY, async (branch) => {
         await forEachCommit(repo, branch, context, (commit) => {
-            context.baselineCommits.add(commit.sha);
+            if (!external) {
+                context.baselineCommits.add(commit.sha);
+                context.orgCommits.add(commit.sha);
+            }
 
             const user = commitUser(commit);
             if (user === undefined) return;
             recordUser(context, user);
 
-            if (full === null || context.seenFullCommits.has(commit.sha)) return;
+            if (full === null) return;
+
+            // External repos are never part of the org contribution graph.
+            // Skip only commits that an org repo already contributed, so a
+            // fork or mirror cannot count the same commit twice.
+            if (external) {
+                if (context.orgCommits.has(commit.sha)) return;
+                if (context.seenExternalCommits.has(commit.sha)) return;
+                context.seenExternalCommits.add(commit.sha);
+                addActivity(full, user, "commits");
+                return;
+            }
+
+            if (context.seenFullCommits.has(commit.sha)) return;
             context.seenFullCommits.add(commit.sha);
             addActivity(full, user, "commits");
         });
@@ -599,16 +726,29 @@ const prepareRepo = async (repo: RepoRest, context: ScanContext): Promise<RepoPl
 
 const scanExtraBranches = async (plan: RepoPlan, context: ScanContext): Promise<void> => {
     const { repo, extraBranches, extra, full } = plan;
+    const external = repo.external === true;
 
     await mapWithConcurrency(extraBranches, BRANCH_CONCURRENCY, async (branch) => {
         await forEachCommit(repo, branch.name, context, (commit) => {
+            if (!external) context.orgCommits.add(commit.sha);
+
             const user = commitUser(commit);
             if (user === undefined) return;
             recordUser(context, user);
 
-            if (full !== null && !context.seenFullCommits.has(commit.sha)) {
-                context.seenFullCommits.add(commit.sha);
-                addActivity(full, user, "commits");
+            if (full !== null) {
+                if (external) {
+                    if (context.orgCommits.has(commit.sha)) return;
+                    if (context.seenExternalCommits.has(commit.sha)) return;
+                    context.seenExternalCommits.add(commit.sha);
+                    addActivity(full, user, "commits");
+                    return;
+                }
+
+                if (!context.seenFullCommits.has(commit.sha)) {
+                    context.seenFullCommits.add(commit.sha);
+                    addActivity(full, user, "commits");
+                }
             }
 
             if (extra === null) return;
@@ -800,9 +940,12 @@ const scanRepos = async (
         publicExtra: new Map(),
         privateExtra: new Map(),
         privateFull: new Map(),
+        externalFull: new Map(),
         baselineCommits: new Set(),
+        orgCommits: new Set(),
         seenExtraCommits: new Set(),
         seenFullCommits: new Set(),
+        seenExternalCommits: new Set(),
         seenExtraPulls: new Set(),
         seenFullPulls: new Set(),
         seenFullReviews: new Set(),
@@ -811,31 +954,41 @@ const scanRepos = async (
         privateContributionsVisible,
     };
 
-    const plans = await mapWithConcurrency(repos, SCAN_REPO_CONCURRENCY, async (repo) => {
-        try {
-            return await prepareRepo(repo, context);
-        } catch (error) {
-            if (!isSkippableRepoError(error)) throw error;
-            warnings.push(`Skipped repository ${repo.full_name}: ${errorDetail(error)}`);
-            return null;
-        }
-    });
+    const preparePlans = async (group: RepoRest[]): Promise<RepoPlan[]> => {
+        const plans = await mapWithConcurrency(group, SCAN_REPO_CONCURRENCY, async (repo) => {
+            try {
+                return await prepareRepo(repo, context);
+            } catch (error) {
+                if (!isSkippableRepoError(error)) throw error;
+                warnings.push(`Skipped repository ${repo.full_name}: ${errorDetail(error)}`);
+                return null;
+            }
+        });
+        return plans.filter((plan): plan is RepoPlan => plan !== null);
+    };
 
-    const readablePlans = plans.filter((plan): plan is RepoPlan => plan !== null);
-    await mapWithConcurrency(readablePlans, SCAN_REPO_CONCURRENCY, async (plan) => {
-        try {
-            await scanPlan(plan, context);
-        } catch (error) {
-            if (!isSkippableRepoError(error)) throw error;
-            warnings.push(`Partially scanned ${plan.repo.full_name}: ${errorDetail(error)}`);
-        }
-    });
+    const scanPlans = async (plans: RepoPlan[]): Promise<void> => {
+        await mapWithConcurrency(plans, SCAN_REPO_CONCURRENCY, async (plan) => {
+            try {
+                await scanPlan(plan, context);
+            } catch (error) {
+                if (!isSkippableRepoError(error)) throw error;
+                warnings.push(`Partially scanned ${plan.repo.full_name}: ${errorDetail(error)}`);
+            }
+        });
+    };
+
+    // Organization repos first: their complete commit set is the baseline
+    // that stops an allowed external fork from double-counting the same SHA.
+    await scanPlans(await preparePlans(repos.filter((repo) => repo.external !== true)));
+    await scanPlans(await preparePlans(repos.filter((repo) => repo.external === true)));
 
     return {
         users: context.users,
         publicExtra: context.publicExtra,
         privateExtra: context.privateExtra,
         privateFull: context.privateFull,
+        externalFull: context.externalFull,
     };
 };
 
@@ -935,12 +1088,13 @@ export const collectContributions = async (
     now: Date,
     customRange?: CustomRange,
     client: CollectorClient = githubClient,
+    extraRepos: readonly string[] = [],
 ): Promise<CollectResult> => {
     const warnings: string[] = [];
 
     // 1. Organization + members. A missing org fails loudly here; a permission
     //    problem falls back to public members + repo contributors.
-    const org = await fetchOrgWithMembers(orgLogin, client);
+    const org = await fetchOrgWithMembers(orgLogin, client, extraRepos, warnings);
     const window = resolveWindow(period, now, { orgCreatedAt: org.createdAt, customRange });
     const chunks = splitWindow(window);
 
@@ -1057,11 +1211,14 @@ export const collectContributions = async (
     // 6. Add what GraphQL's contribution graph leaves out. Public repositories
     //    always have GraphQL counts; private ones only when `read:user` is
     //    available, otherwise the full direct scan is the only source.
+    //    External projects are never part of the org graph, so their direct
+    //    scan is always merged.
     contributors = mergeActivity(contributors, scan.publicExtra);
     contributors = mergeActivity(
         contributors,
         privateVisible ? scan.privateExtra : scan.privateFull,
     );
+    contributors = mergeActivity(contributors, scan.externalFull);
 
     return {
         contributors,

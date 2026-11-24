@@ -68,6 +68,20 @@ const leaderboardConfigSchema = z.object({
         .refine(validateCron, "LEADERBOARD_CRON must be a valid cron expression"),
     // Empty disables the scheduler (manual refresh still works for any org).
     Orgs: z.array(z.string().trim().min(1, "LEADERBOARD_ORGS entries must not be empty")),
+    /**
+     * Extra repositories to count on top of the organization's own repos.
+     * Each entry is `org=owner/repo`, for example
+     * `MicroClub-USTHB=maito-guy/wildfire-dz`.
+     */
+    ExtraRepos: z.array(
+        z
+            .string()
+            .trim()
+            .regex(
+                /^[^=\s/]+\=[^=\s/]+\/[^=\s/]+$/,
+                "LEADERBOARD_EXTRA_REPOS entries must look like org=owner/repo",
+            ),
+    ),
 });
 
 const logConfigSchema = z.object({
