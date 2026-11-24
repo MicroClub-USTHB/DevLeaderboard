@@ -255,9 +255,10 @@ this was a scope problem, not an attribution problem.
   window, every review, and issues opened or solved.
 - **No duplicate history.** Organization repositories are scanned first, and every org commit SHA is
   recorded. An external fork or mirror skips those SHAs, so shared history is counted once.
-- **Local configuration.** `backend/config/.env` sets
-  `LEADERBOARD_EXTRA_REPOS=MicroClub-USTHB=maito-guy/wildfire-dz`; the setting is documented in
-  `.env.example` and both READMEs.
+- **Default configuration.** `LEADERBOARD_EXTRA_REPOS` defaults to
+  `MicroClub-USTHB=maito-guy/wildfire-dz`, so the fix survives a fresh clone and Docker deploy.
+  `backend/config/.env` sets the same value explicitly, and `.env.example`, `docker-compose.yml`
+  and both READMEs document how to override or disable it.
 
 **Verification**
 

@@ -51,8 +51,9 @@ works in a private repository the token cannot access, they will not appear. Gra
 to those repositories (fine-grained: *Contents: Read*, *Metadata: Read*, *Pull requests: Read*,
 *Issues: Read*), or use a classic PAT with `repo` + `read:user`.
 
-**External projects.** Club work that lives outside the organization can be added with
-`LEADERBOARD_EXTRA_REPOS=org=owner/repo` (comma-separated for several). The repository is resolved
+**External projects.** Club work that lives outside the organization is configured with
+`LEADERBOARD_EXTRA_REPOS=org=owner/repo` (comma-separated for several). The default counts
+`MicroClub-USTHB=maito-guy/wildfire-dz`; set an empty value to disable. The repository is resolved
 through GraphQL, marked external, and scanned in full: every branch, PR, review and issue is counted
 directly because `contributionsCollection(organizationID:)` never includes it. Commit SHAs already
 seen in an organization repository are skipped, so a fork or mirror cannot double-count history.
@@ -83,7 +84,7 @@ an unknown `LOG_LEVEL`.
 | `SCORE_ISSUE` | `2` | Score weight per issue opened or solved in the window |
 | `LEADERBOARD_CRON` | `0 */6 * * *` | 5-field cron expression (server timezone) |
 | `LEADERBOARD_ORGS` | `MicroClub-USTHB` | Comma-separated org logins to refresh automatically. Empty = scheduler off |
-| `LEADERBOARD_EXTRA_REPOS` | *(empty)* | Extra projects counted per org, as `org=owner/repo` (comma-separated) |
+| `LEADERBOARD_EXTRA_REPOS` | `MicroClub-USTHB=maito-guy/wildfire-dz` | Extra projects counted per org, as `org=owner/repo` (comma-separated). Empty = org-only |
 | `LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error` — one JSON object per line |
 
 ---

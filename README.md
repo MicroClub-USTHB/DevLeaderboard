@@ -86,11 +86,11 @@ merge that makes the same commit reachable from several branches is counted once
 If a contributor works in a private repository the token cannot access, they cannot appear on the
 board. Grant the token access to those repositories, or use a classic PAT with `repo` + `read:user`.
 
-Club work sometimes lives in a personal repository. Add it explicitly with
-`LEADERBOARD_EXTRA_REPOS=org=owner/repo` (comma-separated for several projects). Those repositories
-are scanned in full — every branch, PR, review and issue — and merged into the same board. For
-example, `LEADERBOARD_EXTRA_REPOS=MicroClub-USTHB=maito-guy/wildfire-dz` counts that project on the
-`MicroClub-USTHB` leaderboard.
+Club work sometimes lives in a personal repository. The default configuration counts
+`MicroClub-USTHB=maito-guy/wildfire-dz` for the club board; override it with
+`LEADERBOARD_EXTRA_REPOS=org=owner/repo` (comma-separated for several projects), or set it to an
+empty value to keep the board strictly organization-scoped. External repositories are scanned in
+full — every branch, PR, review and issue — and merged into the same board.
 
 ### Production build
 

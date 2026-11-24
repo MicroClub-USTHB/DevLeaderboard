@@ -18,9 +18,10 @@ export const defaults = {
     // The org the site opens on. Override with LEADERBOARD_ORGS, or set it to
     // an empty string to disable the scheduler.
     LEADERBOARD_ORGS: "MicroClub-USTHB",
-    // Optional external projects, written as `org=owner/repo`. Activity in
-    // these repositories is counted on top of the organization's own repos.
-    LEADERBOARD_EXTRA_REPOS: "",
+    // External projects, written as `org=owner/repo`. The club's wildfire-dz
+    // project lives in a personal repository, so it is counted by default.
+    // Set an empty value to keep the board strictly organization-scoped.
+    LEADERBOARD_EXTRA_REPOS: "MicroClub-USTHB=maito-guy/wildfire-dz",
     LOG_LEVEL: "info",
     // Reuse the Dev list from MCID for ten minutes.
     MCID_ROSTER_TTL_MS: 10 * 60 * 1000,
