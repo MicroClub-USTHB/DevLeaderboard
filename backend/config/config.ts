@@ -60,6 +60,15 @@ function loadConfig(): Config {
         Log: {
             Level: process.env.LOG_LEVEL ?? defaults.LOG_LEVEL,
         },
+        Mcid: {
+            Url: process.env.MCID_URL ?? "",
+            ApiKey: process.env.MCID_API_KEY ?? "",
+            DevRoleIds: (process.env.MCID_DEV_ROLE_IDS ?? "")
+                .split(",")
+                .map((entry) => entry.trim())
+                .filter((entry) => entry.length > 0),
+            CacheTtlMs: process.env.MCID_ROSTER_TTL_MS ?? defaults.MCID_ROSTER_TTL_MS,
+        },
     };
 
     const result = configSchema.safeParse(raw);

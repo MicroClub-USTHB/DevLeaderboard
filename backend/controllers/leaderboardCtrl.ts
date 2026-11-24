@@ -16,6 +16,7 @@ import {
     type Period,
 } from "../services/leaderboard/periods.js";
 import { requestRefresh } from "../services/leaderboard/backgroundRefresh.js";
+import { getDevRoster } from "../services/roster/devRoster.js";
 import { syncLeaderboard } from "../services/leaderboard/sync.js";
 import type { SyncResult } from "../services/leaderboard/types.js";
 
@@ -165,10 +166,18 @@ export const getLeaderboard = async (req: Request, res: Response): Promise<void>
         return;
     }
 
-    const entries = snapshot.contributors.slice(offset, offset + limit);
-    // Varies with the data, the projection and the range, so a stale list is
-    // never cached.
-    const etag = `W/"${snapshot.generatedAt.getTime()}-${snapshot.contributors.length}-${limit}-${offset}-${rangeKey}"`;
+    // The public board is the Dev department only. Everyone else is dropped
+    // here, on the server, before anything is counted or sent: totals and ranks
+    // describe the department, never the whole organization.
+    const roster = await getDevRoster();
+    const department = snapshot.contributors
+        .filter((contributor) => roster.logins.has(contributor.login.toLowerCase()))
+        .map((contributor, index) => ({ ...contributor, rank: index + 1 }));
+
+    const entries = department.slice(offset, offset + limit);
+    // Varies with the data, the roster, the projection and the range, so a
+    // stale list is never cached.
+    const etag = `W/"${snapshot.generatedAt.getTime()}-${roster.fingerprint}-${department.length}-${limit}-${offset}-${rangeKey}"`;
 
     res.set("ETag", etag);
     if (req.fresh) {
@@ -183,7 +192,7 @@ export const getLeaderboard = async (req: Request, res: Response): Promise<void>
         generatedAt: snapshot.generatedAt,
         windowFrom: snapshot.windowFrom,
         windowTo: snapshot.windowTo,
-        total: snapshot.contributors.length,
+        total: department.length,
         count: entries.length,
         entries,
     });
@@ -221,5 +230,9 @@ export const refreshLeaderboard = async (req: Request, res: Response): Promise<v
         throw error;
     }
 
-    res.status(200).json({ org: org.toLowerCase(), results });
+    // Counts would describe the whole organization, which is not public.
+    res.status(200).json({
+        org: org.toLowerCase(),
+        results: results.map(({ entryCount: _entryCount, ...result }) => result),
+    });
 };

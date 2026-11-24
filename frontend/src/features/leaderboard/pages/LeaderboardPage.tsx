@@ -130,7 +130,7 @@ export const LeaderboardPage = (): ReactNode => {
             <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
                 <div>
                     <p className="text-xs font-medium uppercase tracking-wide text-accent-400">
-                        Leaderboard
+                        Dev department
                     </p>
                     <h1 className="mt-1 text-3xl font-semibold tracking-tight">{org}</h1>
                 </div>

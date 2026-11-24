@@ -65,7 +65,6 @@ export interface SnapshotSummary {
     windowFrom: string;
     windowTo: string;
     generatedAt: string;
-    entryCount: number;
 }
 
 /** GET /leaderboard/:org/meta */
@@ -84,7 +83,6 @@ export interface SyncResult {
     generatedAt: string;
     windowFrom: string;
     windowTo: string;
-    entryCount: number;
     warnings: string[];
     /** True when a fresh cached snapshot was served without calling GitHub. */
     skipped: boolean;
