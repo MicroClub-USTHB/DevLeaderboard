@@ -94,7 +94,6 @@ export interface SnapshotSummary {
     windowFrom: Date;
     windowTo: Date;
     generatedAt: Date;
-    entryCount: number;
 }
 
 /** Read path: a single org+period+range snapshot, lowercased for the index. */
@@ -122,7 +121,6 @@ export const findSnapshotSummaries = async (orgLogin: string): Promise<SnapshotS
                 windowFrom: 1,
                 windowTo: 1,
                 generatedAt: 1,
-                entryCount: { $size: { $ifNull: ["$contributors", []] } },
             },
         },
         { $sort: { period: 1, windowFrom: 1 } },

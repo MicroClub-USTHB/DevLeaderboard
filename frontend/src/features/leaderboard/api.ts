@@ -5,6 +5,7 @@ import {
     type LeaderboardMeta,
     type LeaderboardResult,
     type Period,
+    type Scope,
     type RefreshResponse,
 } from "@/shared/api/types";
 import { formatRetryDelay } from "@/shared/lib/format";
@@ -14,6 +15,7 @@ import { PERIOD_LABELS } from "./constants";
 export interface LeaderboardParams {
     org: string;
     period: Period;
+    scope: Scope;
     limit: number;
     /** Ranked contributors to skip, for server-side pagination. */
     offset: number;
@@ -48,6 +50,7 @@ const leaderboardKey = (params: LeaderboardParams): readonly unknown[] => [
     "leaderboard",
     params.org.toLowerCase(),
     params.period,
+    params.scope,
     rangeKeyOf(params),
     params.limit,
     params.offset,
@@ -59,6 +62,8 @@ const buildQuery = (params: LeaderboardParams): string => {
         limit: String(params.limit),
         offset: String(params.offset),
     });
+
+    if (params.scope !== "global") query.set("scope", params.scope);
 
     if (params.period === "custom" && params.from !== undefined && params.to !== undefined) {
         query.set("from", params.from);

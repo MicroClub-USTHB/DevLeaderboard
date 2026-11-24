@@ -19,4 +19,6 @@ export const defaults = {
     // an empty string to disable the scheduler.
     LEADERBOARD_ORGS: "MicroClub-USTHB",
     LOG_LEVEL: "info",
+    // Reuse the Dev list from MCID for ten minutes.
+    MCID_ROSTER_TTL_MS: 10 * 60 * 1000,
 } as const;

@@ -74,6 +74,20 @@ const logConfigSchema = z.object({
     Level: z.enum(["debug", "info", "warn", "error"], "LOG_LEVEL must be debug, info, warn or error"),
 });
 
+// The Dev department filter. MCID says who that is: members holding one of
+// these Discord roles, with the GitHub account they linked. Optional: without
+// it the Global view works and the Dev filter answers 503.
+const mcidConfigSchema = z.object({
+    /** MCID API root, including /api (e.g. https://mcid-api.microclub.info/api). */
+    Url: z.string().url("MCID_URL must be a valid URL").transform((url) => url.replace(/\/+$/, "")),
+    ApiKey: z.string().min(1, "MCID_API_KEY is required"),
+    DevRoleIds: z
+        .array(z.string().regex(/^\d{17,20}$/, "MCID_DEV_ROLE_IDS entries must be Discord role ids"))
+        .min(1, "MCID_DEV_ROLE_IDS needs at least one Discord role id"),
+    /** How long the Dev list is reused before MCID is asked again. */
+    CacheTtlMs: z.coerce.number().int().positive(),
+});
+
 export const configSchema = z.object({
     Database: databaseConfigSchema,
     Port: z.coerce.number().int().positive(),
@@ -82,7 +96,9 @@ export const configSchema = z.object({
     Score: scoreWeightsSchema,
     Leaderboard: leaderboardConfigSchema,
     Log: logConfigSchema,
+    Mcid: mcidConfigSchema.optional(),
 });
 
+export type McidConfig = z.infer<typeof mcidConfigSchema>;
 export type DatabaseConfig = z.infer<typeof databaseConfigSchema>;
 export type Config = z.infer<typeof configSchema>;

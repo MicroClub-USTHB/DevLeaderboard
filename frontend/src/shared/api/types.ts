@@ -6,6 +6,10 @@
  * Every field here has been verified against a live backend response.
  */
 
+/** `global` is everyone who contributed; `dev` is the Dev department only. */
+export const SCOPES = ["global", "dev"] as const;
+export type Scope = (typeof SCOPES)[number];
+
 export type Period = "month" | "all" | "custom";
 
 export const PERIODS: readonly Period[] = ["month", "all", "custom"] as const;
@@ -65,7 +69,6 @@ export interface SnapshotSummary {
     windowFrom: string;
     windowTo: string;
     generatedAt: string;
-    entryCount: number;
 }
 
 /** GET /leaderboard/:org/meta */
@@ -84,7 +87,6 @@ export interface SyncResult {
     generatedAt: string;
     windowFrom: string;
     windowTo: string;
-    entryCount: number;
     warnings: string[];
     /** True when a fresh cached snapshot was served without calling GitHub. */
     skipped: boolean;
