@@ -6,6 +6,10 @@
  * Every field here has been verified against a live backend response.
  */
 
+/** `global` is everyone who contributed; `dev` is the Dev department only. */
+export const SCOPES = ["global", "dev"] as const;
+export type Scope = (typeof SCOPES)[number];
+
 export type Period = "month" | "all" | "custom";
 
 export const PERIODS: readonly Period[] = ["month", "all", "custom"] as const;

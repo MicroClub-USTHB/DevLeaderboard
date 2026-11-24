@@ -42,6 +42,8 @@ const listQuery = z.object({
     period: z.enum(PERIODS).default("month"),
     limit: z.coerce.number().int().min(1).max(100).default(50),
     offset: z.coerce.number().int().min(0).max(100_000).default(0),
+    // `global` is everyone who contributed; `dev` is the Dev department only.
+    scope: z.enum(["global", "dev"]).default("global"),
     from: dateKey.optional(),
     to: dateKey.optional(),
 });
@@ -147,7 +149,7 @@ const toHttpError = (error: GitHubError, res: Response): HttpError => {
 
 export const getLeaderboard = async (req: Request, res: Response): Promise<void> => {
     const { org } = orgParams.parse(req.params);
-    const { period, limit, offset, from, to } = listQuery.parse(req.query);
+    const { period, limit, offset, from, to, scope } = listQuery.parse(req.query);
     const { rangeKey, customRange } = parseRange(period, from, to);
 
     const snapshot = await findSnapshot(org, period, rangeKey);
@@ -166,18 +168,26 @@ export const getLeaderboard = async (req: Request, res: Response): Promise<void>
         return;
     }
 
-    // The public board is the Dev department only. Everyone else is dropped
-    // here, on the server, before anything is counted or sent: totals and ranks
-    // describe the department, never the whole organization.
-    const roster = await getDevRoster();
-    const department = snapshot.contributors
-        .filter((contributor) => roster.logins.has(contributor.login.toLowerCase()))
-        .map((contributor, index) => ({ ...contributor, rank: index + 1 }));
+    // Global is everyone who contributed. Dev keeps only the Dev department, and
+    // that is decided here, on the server: the filtered entries, totals and ranks
+    // are all computed before anything is sent.
+    let contributors = snapshot.contributors;
+    let audience = "all";
+    if (scope === "dev") {
+        if (config.Mcid === undefined) {
+            throw new HttpError(503, "The Dev department filter is not set up on this server.");
+        }
+        const roster = await getDevRoster(config.Mcid);
+        audience = roster.fingerprint;
+        contributors = contributors
+            .filter((contributor) => roster.logins.has(contributor.login.toLowerCase()))
+            .map((contributor, index) => ({ ...contributor, rank: index + 1 }));
+    }
 
-    const entries = department.slice(offset, offset + limit);
-    // Varies with the data, the roster, the projection and the range, so a
+    const entries = contributors.slice(offset, offset + limit);
+    // Varies with the data, the audience, the projection and the range, so a
     // stale list is never cached.
-    const etag = `W/"${snapshot.generatedAt.getTime()}-${roster.fingerprint}-${department.length}-${limit}-${offset}-${rangeKey}"`;
+    const etag = `W/"${snapshot.generatedAt.getTime()}-${scope}-${audience}-${contributors.length}-${limit}-${offset}-${rangeKey}"`;
 
     res.set("ETag", etag);
     if (req.fresh) {
@@ -192,7 +202,8 @@ export const getLeaderboard = async (req: Request, res: Response): Promise<void>
         generatedAt: snapshot.generatedAt,
         windowFrom: snapshot.windowFrom,
         windowTo: snapshot.windowTo,
-        total: department.length,
+        scope,
+        total: contributors.length,
         count: entries.length,
         entries,
     });

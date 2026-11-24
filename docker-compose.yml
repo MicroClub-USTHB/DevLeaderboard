@@ -21,10 +21,10 @@ services:
       DATABASE_PORT: 27017
       DATABASE_NAME: devleaderboard
       GITHUB_TOKEN: ${GITHUB_TOKEN:?set GITHUB_TOKEN (needed to boot)}
-      # The public board shows the Dev department only; MCID says who that is.
-      MCID_URL: ${MCID_URL:?set MCID_URL (the MCID API root, ending in /api)}
-      MCID_API_KEY: ${MCID_API_KEY:?set MCID_API_KEY (this site's MCID project key)}
-      MCID_DEV_ROLE_IDS: ${MCID_DEV_ROLE_IDS:?set MCID_DEV_ROLE_IDS (comma-separated Discord role ids)}
+      # Optional: the Dev department filter. Leave MCID_URL empty to turn it off.
+      MCID_URL: ${MCID_URL:-}
+      MCID_API_KEY: ${MCID_API_KEY:-}
+      MCID_DEV_ROLE_IDS: ${MCID_DEV_ROLE_IDS:-}
       MCID_ROSTER_TTL_MS: ${MCID_ROSTER_TTL_MS:-600000}
     depends_on:
       mongo:

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { config } from "../../config/config.js";
+import type { McidConfig } from "../../config/schema.js";
 import { logger } from "../../lib/logger.js";
 import { HttpError } from "../../middleware/errorHandler.js";
 
@@ -23,8 +23,8 @@ let cached: DevRoster | null = null;
 let lastFailureAt = 0;
 let inFlight: Promise<DevRoster> | null = null;
 
-const fetchRoster = async (): Promise<DevRoster> => {
-    const { Url, ApiKey, DevRoleIds } = config.Mcid;
+const fetchRoster = async (mcid: McidConfig): Promise<DevRoster> => {
+    const { Url, ApiKey, DevRoleIds } = mcid;
     const query = new URLSearchParams({ provider: "github", roleIds: DevRoleIds.join(",") });
 
     const response = await fetch(`${Url}/identities?${query.toString()}`, {
@@ -53,8 +53,8 @@ const fetchRoster = async (): Promise<DevRoster> => {
  * people open the page. If MCID is down the last good list keeps being served;
  * with no list at all it fails closed (503) and never falls back to everyone.
  */
-export const getDevRoster = async (): Promise<DevRoster> => {
-    const ttl = config.Mcid.CacheTtlMs;
+export const getDevRoster = async (mcid: McidConfig): Promise<DevRoster> => {
+    const ttl = mcid.CacheTtlMs;
     const now = Date.now();
 
     if (cached !== null && now - cached.fetchedAt < ttl) return cached;
@@ -62,7 +62,7 @@ export const getDevRoster = async (): Promise<DevRoster> => {
         throw new HttpError(503, "The Dev department list is unavailable right now.");
     }
 
-    inFlight ??= fetchRoster()
+    inFlight ??= fetchRoster(mcid)
         .then((roster) => {
             cached = roster;
             lastFailureAt = 0;

@@ -74,8 +74,9 @@ const logConfigSchema = z.object({
     Level: z.enum(["debug", "info", "warn", "error"], "LOG_LEVEL must be debug, info, warn or error"),
 });
 
-// The public leaderboard shows the Dev department only. MCID says who that is:
-// members holding one of these Discord roles, with the GitHub account they linked.
+// The Dev department filter. MCID says who that is: members holding one of
+// these Discord roles, with the GitHub account they linked. Optional: without
+// it the Global view works and the Dev filter answers 503.
 const mcidConfigSchema = z.object({
     /** MCID API root, including /api (e.g. https://mcid-api.microclub.info/api). */
     Url: z.string().url("MCID_URL must be a valid URL").transform((url) => url.replace(/\/+$/, "")),
@@ -95,7 +96,7 @@ export const configSchema = z.object({
     Score: scoreWeightsSchema,
     Leaderboard: leaderboardConfigSchema,
     Log: logConfigSchema,
-    Mcid: mcidConfigSchema,
+    Mcid: mcidConfigSchema.optional(),
 });
 
 export type McidConfig = z.infer<typeof mcidConfigSchema>;

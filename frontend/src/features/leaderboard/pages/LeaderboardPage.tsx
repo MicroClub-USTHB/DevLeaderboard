@@ -2,14 +2,15 @@ import { useEffect, useMemo, type ReactNode } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { Inbox, RefreshCw } from "lucide-react";
 import { ApiError } from "@/shared/api/client";
-import { hasSnapshot, PERIODS, type Period } from "@/shared/api/types";
+import { hasSnapshot, PERIODS, SCOPES, type Period, type Scope } from "@/shared/api/types";
 import { defaultCustomRange, validateRange, type DateRange } from "@/shared/lib/dates";
 import { formatDate, formatRelativeTime } from "@/shared/lib/format";
 import { Button } from "@/shared/ui/Button";
 import { EmptyState, ErrorState, Skeleton } from "@/shared/ui/States";
-import { DEFAULT_PERIOD, MAX_CUSTOM_DAYS, PAGE_SIZE } from "../constants";
+import { DEFAULT_PERIOD, DEFAULT_SCOPE, MAX_CUSTOM_DAYS, PAGE_SIZE, SCOPE_LABELS } from "../constants";
 import { useLeaderboard } from "../api";
 import { Pagination } from "../components/Pagination";
+import { ScopeSelector } from "../components/ScopeSelector";
 import { ScoreCards } from "../components/ScoreCards";
 import { ScoreTable } from "../components/ScoreTable";
 import { StaleDataBanner } from "../components/StaleDataBanner";
@@ -17,6 +18,9 @@ import { TimelineSelector, type TimelineSelection } from "../components/Timeline
 
 const isPeriod = (value: string | null): value is Period =>
     value !== null && (PERIODS as readonly string[]).includes(value);
+
+const isScope = (value: string | null): value is Scope =>
+    value !== null && (SCOPES as readonly string[]).includes(value);
 
 const MAX_PAGE = 5_000;
 
@@ -33,6 +37,8 @@ export const LeaderboardPage = (): ReactNode => {
     const period = isPeriod(searchParams.get("period"))
         ? (searchParams.get("period") as Period)
         : DEFAULT_PERIOD;
+    const rawScope = searchParams.get("scope");
+    const scope: Scope = isScope(rawScope) ? rawScope : DEFAULT_SCOPE;
     const rawFrom = searchParams.get("from");
     const rawTo = searchParams.get("to");
     const page = parsePage(searchParams.get("page"));
@@ -68,6 +74,7 @@ export const LeaderboardPage = (): ReactNode => {
     const leaderboard = useLeaderboard({
         org,
         period,
+        scope,
         limit: PAGE_SIZE,
         offset,
         from: rangeFrom ?? undefined,
@@ -90,6 +97,15 @@ export const LeaderboardPage = (): ReactNode => {
             params.delete("from");
             params.delete("to");
         }
+
+        setSearchParams(params, { replace: true });
+    };
+
+    const changeScope = (next: Scope): void => {
+        const params = new URLSearchParams(searchParams);
+        if (next === DEFAULT_SCOPE) params.delete("scope");
+        else params.set("scope", next);
+        params.delete("page");
 
         setSearchParams(params, { replace: true });
     };
@@ -130,11 +146,12 @@ export const LeaderboardPage = (): ReactNode => {
             <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
                 <div>
                     <p className="text-xs font-medium uppercase tracking-wide text-accent-400">
-                        Dev department
+                        {SCOPE_LABELS[scope]}
                     </p>
                     <h1 className="mt-1 text-3xl font-semibold tracking-tight">{org}</h1>
                 </div>
                 <div className="flex flex-wrap items-end gap-2">
+                    <ScopeSelector value={scope} onChange={changeScope} />
                     <TimelineSelector
                         value={period}
                         from={selectorRange.from}
@@ -190,7 +207,7 @@ export const LeaderboardPage = (): ReactNode => {
                                 {firstShown === 0 ? 0 : `${firstShown}–${lastShown}`}
                             </span>{" "}
                             of <span className="text-ink-muted tabular">{snapshot.total}</span>{" "}
-                            contributors
+                            {scope === "dev" ? "Dev members" : "contributors"}
                         </p>
 
                         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ink-faint">
@@ -211,7 +228,11 @@ export const LeaderboardPage = (): ReactNode => {
                         <EmptyState
                             icon={<Inbox size={20} />}
                             title="No activity in this period"
-                            description="Nobody contributed during the selected window. Try a different range."
+                            description={
+                                scope === "dev"
+                                    ? "No Dev member contributed during this window, or they have not linked their GitHub account yet. Try a different range."
+                                    : "Nobody contributed during the selected window. Try a different range."
+                            }
                         />
                     ) : (
                         <>
