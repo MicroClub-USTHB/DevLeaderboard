@@ -46,8 +46,12 @@ services:
       DATABASE_HOST: mongo
       DATABASE_PORT: "27017"
       DATABASE_NAME: devleaderboard
-      GITHUB_TOKEN: ${GITHUB_TOKEN:?set GITHUB_TOKEN in .env}
+      # Credentials, in order of preference: the GitHub App, GITHUB_TOKEN, GITHUB_TOKEN_FALLBACK.
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       GITHUB_TOKEN_FALLBACK: ${GITHUB_TOKEN_FALLBACK:-}
+      GITHUB_APP_ID: ${GITHUB_APP_ID:-}
+      GITHUB_APP_INSTALLATION_ID: ${GITHUB_APP_INSTALLATION_ID:-}
+      GITHUB_APP_PRIVATE_KEY_PATH: /run/secrets/github-app.pem
       LEADERBOARD_ORGS: ${LEADERBOARD_ORGS:-MicroClub-USTHB}
       LEADERBOARD_CRON: ${LEADERBOARD_CRON:-0 */6 * * *}
       MCID_URL: ${MCID_URL:-}
@@ -61,6 +65,9 @@ services:
       MCID_WEBHOOK_SECRET: ${MCID_WEBHOOK_SECRET:-}
       PUBLIC_URL: ${PUBLIC_URL:-}
       SESSION_SECRET: ${SESSION_SECRET:-}
+    volumes:
+      # The GitHub App private key (read-only). Unset = /dev/null, which the app ignores.
+      - ${GITHUB_APP_KEY_FILE:-/dev/null}:/run/secrets/github-app.pem:ro
     depends_on:
       mongo:
         condition: service_healthy

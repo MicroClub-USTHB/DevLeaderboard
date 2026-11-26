@@ -1,4 +1,5 @@
 import dotenv from "dotenv";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { defaults } from "./default.js";
 import { configSchema, type Config } from "./schema.js";
@@ -16,6 +17,26 @@ const dotenvCandidates = [
 ];
 for (const candidate of dotenvCandidates) {
     dotenv.config({ path: candidate, quiet: true });
+}
+
+/**
+ * The GitHub App private key: a mounted file (GITHUB_APP_PRIVATE_KEY_PATH, preferred) or the
+ * PEM itself (GITHUB_APP_PRIVATE_KEY, with a literal backslash-n for line breaks). Throws a
+ * readable error instead of leaving the app half configured.
+ */
+function readGitHubAppKey(): string {
+    const inline = process.env.GITHUB_APP_PRIVATE_KEY?.trim();
+    if (inline) return inline.split("\\n").join("\n");
+
+    const keyPath = process.env.GITHUB_APP_PRIVATE_KEY_PATH?.trim();
+    if (!keyPath) return "";
+
+    try {
+        return readFileSync(keyPath, "utf8").trim();
+    } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        throw new Error(`GITHUB_APP_PRIVATE_KEY_PATH could not be read: ${reason}`);
+    }
 }
 
 function loadConfig(): Config {
@@ -44,6 +65,13 @@ function loadConfig(): Config {
         GitHub: {
             Token: process.env.GITHUB_TOKEN ?? "",
             FallbackToken: process.env.GITHUB_TOKEN_FALLBACK?.trim() || undefined,
+            App: process.env.GITHUB_APP_ID?.trim()
+                ? {
+                      AppId: process.env.GITHUB_APP_ID.trim(),
+                      InstallationId: process.env.GITHUB_APP_INSTALLATION_ID?.trim() ?? "",
+                      PrivateKey: readGitHubAppKey(),
+                  }
+                : undefined,
             ApiUrl: process.env.GITHUB_API_URL ?? defaults.GITHUB_API_URL,
             TimeoutMs: process.env.GITHUB_TIMEOUT_MS ?? defaults.GITHUB_TIMEOUT_MS,
         },

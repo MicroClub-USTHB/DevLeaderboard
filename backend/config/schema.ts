@@ -47,14 +47,28 @@ const rateLimitConfigSchema = z.object({
     RefreshMax: z.coerce.number().int().positive(),
 });
 
-const githubConfigSchema = z.object({
-    // No default on purpose: leaderboard refresh is pointless without credentials.
-    Token: z.string().min(1, "GITHUB_TOKEN is required"),
-    // Second token (another account) used while the primary is rate limited.
-    FallbackToken: z.string().min(1).optional(),
-    ApiUrl: z.string().url("GITHUB_API_URL must be a valid URL"),
-    TimeoutMs: z.coerce.number().int().positive(),
+const githubAppSchema = z.object({
+    AppId: z.string().min(1, "GITHUB_APP_ID is required"),
+    InstallationId: z.string().min(1, "GITHUB_APP_INSTALLATION_ID is required"),
+    PrivateKey: z.string().min(1, "the GitHub App private key is empty"),
 });
+
+const githubConfigSchema = z
+    .object({
+        // No default on purpose: leaderboard refresh is pointless without credentials.
+        // Optional only when a GitHub App is configured (checked below).
+        Token: z.string(),
+        // Second token (another account) used while the others are rate limited.
+        FallbackToken: z.string().min(1).optional(),
+        // A GitHub App installation: own quota, no person's account involved. Preferred when set.
+        App: githubAppSchema.optional(),
+        ApiUrl: z.string().url("GITHUB_API_URL must be a valid URL"),
+        TimeoutMs: z.coerce.number().int().positive(),
+    })
+    .refine((github) => github.Token.length > 0 || github.App !== undefined, {
+        message: "GITHUB_TOKEN is required unless a GitHub App (GITHUB_APP_ID) is configured",
+        path: ["Token"],
+    });
 
 const scoreWeightsSchema = z.object({
     Commit: z.coerce.number().nonnegative("SCORE_COMMIT must be >= 0"),

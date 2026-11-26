@@ -18,7 +18,9 @@ const BASE_BACKOFF_MS = 500;
 const MIN_BLOCK_MS = 60_000;
 
 interface TokenSlot {
-    value: string;
+    resolve: () => Promise<string>;
+    /** Drop any cached credential after GitHub rejected it. */
+    invalidate?: () => void;
     /** Epoch ms until which this token is skipped (0 = usable). */
     blockedUntil: number;
 }
@@ -95,7 +97,7 @@ const readErrorMessage = async (response: Response): Promise<string> => {
 
 export const createGitHubClient = (options: RestClientOptions): GitHubClient => {
     const { token } = options;
-    if (!token) throw new Error("createGitHubClient: a token is required");
+    if (!token && !options.appAuth) throw new Error("createGitHubClient: a token or a GitHub App is required");
 
     const apiUrl = (options.apiUrl ?? DEFAULT_API_URL).replace(/\/+$/, "");
     const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -108,12 +110,17 @@ export const createGitHubClient = (options: RestClientOptions): GitHubClient => 
     // Last known budget; merged (never wiped) because some responses omit headers.
     let rateLimit: RateLimitInfo | undefined;
 
-    // Primary first, then the optional fallback. A token that hit its rate limit is
-    // skipped until its quota resets, then the primary is preferred again.
-    const slots: TokenSlot[] = [{ value: token, blockedUntil: 0 }];
-    if (options.fallbackToken && options.fallbackToken !== token) {
-        slots.push({ value: options.fallbackToken, blockedUntil: 0 });
+    // Order of preference: the GitHub App, the personal token, the fallback token. A
+    // credential that is rate limited or rejected is skipped until its block expires,
+    // then the most preferred usable one is used again.
+    const slots: TokenSlot[] = [];
+    if (options.appAuth) {
+        const { getToken, invalidate } = options.appAuth;
+        slots.push({ resolve: getToken, invalidate, blockedUntil: 0 });
     }
+    const staticSlot = (value: string): TokenSlot => ({ resolve: async () => value, blockedUntil: 0 });
+    if (token) slots.push(staticSlot(token));
+    if (options.fallbackToken && options.fallbackToken !== token) slots.push(staticSlot(options.fallbackToken));
     let active = 0;
 
     const usableSlot = (): number => {
@@ -139,8 +146,8 @@ export const createGitHubClient = (options: RestClientOptions): GitHubClient => 
         slots[active].blockedUntil = Math.max(until, Date.now() + MIN_BLOCK_MS);
     };
 
-    const buildHeaders = (): Record<string, string> => ({
-        Authorization: `Bearer ${slots[active].value}`,
+    const buildHeaders = (bearer: string): Record<string, string> => ({
+        Authorization: `Bearer ${bearer}`,
         Accept: ACCEPT_JSON,
         "User-Agent": USER_AGENT,
         "X-GitHub-Api-Version": API_VERSION,
@@ -153,14 +160,19 @@ export const createGitHubClient = (options: RestClientOptions): GitHubClient => 
         rateLimit = { ...rateLimit, ...parseRateLimitHeaders(headers) };
     };
 
-    const fetchWithTimeout = async (url: string, method: string, body?: string): Promise<Response> => {
+    const fetchWithTimeout = async (
+        url: string,
+        method: string,
+        bearer: string,
+        body?: string,
+    ): Promise<Response> => {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), timeoutMs);
 
         try {
             return await fetchImpl(url, {
                 method,
-                headers: buildHeaders(),
+                headers: buildHeaders(bearer),
                 body,
                 signal: controller.signal,
             });
@@ -204,10 +216,24 @@ export const createGitHubClient = (options: RestClientOptions): GitHubClient => 
             const preferred = slots.length > 1 ? usableSlot() : -1;
             if (preferred !== -1) useSlot(preferred);
 
+            let bearer: string;
+            try {
+                bearer = await slots[active].resolve();
+            } catch (error) {
+                // E.g. the app token could not be minted: skip it for a while, use the next one.
+                slots[active].blockedUntil = Date.now() + MIN_BLOCK_MS;
+                const next = usableSlot();
+                if (next !== -1) {
+                    useSlot(next);
+                    continue;
+                }
+                throw error;
+            }
+
             let response: Response;
 
             try {
-                response = await fetchWithTimeout(url, method, requestOptions.body);
+                response = await fetchWithTimeout(url, method, bearer, requestOptions.body);
             } catch (error) {
                 // status 0 = network failure or timeout; both are worth retrying.
                 if (error instanceof GitHubError && error.status === 0 && attempt < maxRetries) {
@@ -228,6 +254,18 @@ export const createGitHubClient = (options: RestClientOptions): GitHubClient => 
                 (status === 403 &&
                     (rateLimit?.remaining === 0 || response.headers.has("retry-after")));
             const retriable = RETRIABLE_STATUS.has(status) || rateLimited;
+
+            if (status === 401 && slots.length > 1) {
+                // Revoked or expired credential: forget it, block it for a while, try the next.
+                slots[active].invalidate?.();
+                slots[active].blockedUntil = Date.now() + MIN_BLOCK_MS;
+                const next = usableSlot();
+                if (next !== -1) {
+                    await response.body?.cancel().catch(() => undefined);
+                    useSlot(next);
+                    continue;
+                }
+            }
 
             if (rateLimited && slots.length > 1) {
                 blockActive(response.headers);
