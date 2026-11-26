@@ -1,12 +1,52 @@
-# DevLeaderboard
+<p align="center">
+  <img src="docs/assets/social-preview.png" alt="Micro Club Leaderboard: who is shipping at Micro Club" width="100%" />
+</p>
 
-A GitHub organization leaderboard. It collects contribution activity for every member of an
-organization across **all of its repositories**, ranks them with a composite score, caches the
-result in MongoDB, and serves it through a small HTTP API. The read path never talks to GitHub.
+<h1 align="center">DevLeaderboard</h1>
 
-The site opens directly on **`MicroClub-USTHB`** at `/leaderboard/MicroClub-USTHB` — no login,
-no setup screen. Any other organization can be opened by navigating to
-`/leaderboard/<org-login>`.
+<p align="center">
+  A live GitHub leaderboard for an organization. It ranks everyone who contributed, across <b>every
+  repository and every branch</b>, by commits, pull requests, reviews and issues.
+</p>
+
+<p align="center">
+  <a href="https://github.com/MicroClub-USTHB/DevLeaderboard/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/MicroClub-USTHB/DevLeaderboard/actions/workflows/ci.yml/badge.svg" /></a>
+  <img alt="Node.js 22+" src="https://img.shields.io/badge/node-%3E%3D22-3c873a?logo=node.js&logoColor=white" />
+  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-strict-3178c6?logo=typescript&logoColor=white" />
+  <img alt="React 19" src="https://img.shields.io/badge/React-19-149eca?logo=react&logoColor=white" />
+  <img alt="MongoDB" src="https://img.shields.io/badge/MongoDB-7-47a248?logo=mongodb&logoColor=white" />
+  <img alt="Docker" src="https://img.shields.io/badge/deploy-Docker-2496ed?logo=docker&logoColor=white" />
+</p>
+
+<p align="center">
+  <a href="https://leaderboard.164-68-103-224.sslip.io/"><b>Live site</b></a> &nbsp;·&nbsp;
+  <a href="#quick-start">Quick start</a> &nbsp;·&nbsp;
+  <a href="backend/README.md">Backend docs</a> &nbsp;·&nbsp;
+  <a href="https://github.com/MicroClub-USTHB/DevLeaderboard/issues">Report an issue</a>
+</p>
+
+<p align="center">
+  <img src="docs/assets/leaderboard.png" alt="The leaderboard: podium and ranked table" width="880" />
+</p>
+
+---
+
+The site opens directly on **`MicroClub-USTHB`** at `/leaderboard/MicroClub-USTHB`, with no login and no
+setup screen. Any other organization can be opened by navigating to `/leaderboard/<org-login>`. The read
+path never talks to GitHub: results are collected in the background, stored in MongoDB and served from
+there.
+
+## Contents
+
+[What the app does](#what-the-app-does) ·
+[Link your GitHub](#link-your-github-dev-tab) ·
+[Stack](#stack) ·
+[Quick start](#quick-start) ·
+[Project structure](#project-structure) ·
+[How it works](#how-it-works) ·
+[API overview](#api-overview) ·
+[Deployment](#deployment) ·
+[Scripts](#scripts)
 
 The repo contains both halves of the product:
 
@@ -33,7 +73,7 @@ The repo contains both halves of the product:
 - **Caching with an explicit escape hatch.** The server serves `month` snapshots for 60 seconds and
   `all`/`custom` snapshots for 24 hours; the **Refresh** button sends `force=1` and always
   recomputes.
-- **Praised for its failure behavior:** a stale snapshot stays on screen when GitHub or the API is
+- **Resilient by design:** a stale snapshot stays on screen when GitHub or the API is
   down, with a retry hint and the server's `Retry-After`.
 - **Meta panel:** scoring weights, GitHub rate-limit budget and snapshot freshness.
 
@@ -81,7 +121,26 @@ already has a snapshot.
 The Vite dev server proxies `/api/*` to `http://localhost:3000`, so the browser never makes a
 cross-origin request and the backend needs no CORS headers.
 
-### GitHub token
+### GitHub credentials
+
+The collector reads a lot of data, so credentials matter. In order of preference:
+
+1. **A GitHub App installed on the organization (recommended).** Its installation token has its own
+   quota (12,500 requests an hour for a large organization) and no person's account is involved.
+   Create an app under the organization's *Settings → Developer settings → GitHub Apps* with
+   **read-only** permissions for *Contents*, *Issues*, *Pull requests*, *Metadata* and *Members*,
+   turn the webhook off, install it on all repositories, and generate a private key. Then set
+   `GITHUB_APP_ID`, `GITHUB_APP_INSTALLATION_ID` and `GITHUB_APP_PRIVATE_KEY_PATH` (the `.pem` file;
+   never commit it, `*.pem` is git-ignored).
+2. **A personal access token** (`GITHUB_TOKEN`). Its quota is 5,000 an hour and is shared with
+   everything else that account does.
+3. **A second token** (`GITHUB_TOKEN_FALLBACK`) from a different account.
+
+A credential that cannot be minted, is rejected or is rate limited is skipped until its quota resets,
+and the next one takes over.
+
+#### Token scopes
+
 
 - **Classic PAT** with `repo` + `read:org` + `read:user` — full member list, private repositories,
   and private contributions.
@@ -170,6 +229,19 @@ All responses are JSON; errors use `{ "error": "..." }`.
 | `GET` | `/leaderboard/:org/meta` | Score weights, GitHub rate-limit budget, organization creation date, snapshot freshness |
 | `POST` | `/leaderboard/:org/refresh` | Trigger a refresh (spends GitHub quota). `?period=…`, `from`/`to` for custom, `force=1` to bypass the cache |
 | `GET` | `/health` | `{ "status": "ok" }` |
+
+## Deployment
+
+Production runs as a Docker Compose stack (backend, frontend, MongoDB) behind a Caddy reverse proxy.
+
+- [`deploy/compose.prod.yml`](deploy/compose.prod.yml) is the stack. Only the frontend is published (on
+  `127.0.0.1`); MongoDB sits on an internal network with no published port.
+- [`deploy/.env.production.example`](deploy/.env.production.example) lists every variable. Copy it to
+  `/opt/leaderboard/.env` on the server (`chmod 600`) and fill it in.
+- [`deploy/leaderboard.caddy`](deploy/leaderboard.caddy) is the Caddy site (TLS is automatic).
+- CI builds both images on every push to `main` and pushes them to GHCR; a host Watchtower pulls the new
+  `latest` and recreates the containers.
+- The GitHub App private key is mounted read-only into the backend (`GITHUB_APP_KEY_FILE`).
 
 ## Scripts
 
