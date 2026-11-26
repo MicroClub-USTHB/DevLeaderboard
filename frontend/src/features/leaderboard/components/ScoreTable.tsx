@@ -18,26 +18,24 @@ const cellClass = "px-4 py-3 text-sm tabular text-ink-muted";
 const rowZoneClass: Record<RankZone, string> = {
     top: "border-l-success/70 bg-success/5 hover:bg-success/10",
     bottom: "border-l-danger/70 bg-danger/5 hover:bg-danger/10",
-    neutral: "border-l-transparent hover:bg-overlay/50",
+    neutral: "border-l-transparent hover:bg-overlay/60",
 };
 
 /** Desktop leaderboard. `table-fixed` + right-aligned numerics keep columns stable. */
 export const ScoreTable = ({ entries, total }: ScoreTableProps): ReactNode => (
-    <div className="hidden overflow-hidden rounded-xl border border-line bg-surface md:block">
+    <div className="hidden overflow-hidden rounded-[0.9rem] border border-line bg-surface md:block">
         <table className="w-full table-fixed border-collapse">
             <thead>
-                <tr className="border-b border-line bg-overlay/40 text-left">
+                <tr className="border-b border-line bg-overlay text-left">
                     {HEADERS.map((header, index) => (
                         <th
                             key={header}
                             scope="col"
                             className={[
-                                "px-4 py-3 text-xs font-medium uppercase tracking-wide text-ink-faint",
+                                "px-4 py-3 text-xs font-bold text-accent-700",
                                 index === 0 ? "w-16" : "",
                                 index === 1 ? "w-auto" : "text-right",
-                                index === HEADERS.length - 1
-                                    ? "text-right text-ink-muted"
-                                    : "",
+                                index === HEADERS.length - 1 ? "text-right" : "",
                             ].join(" ")}
                         >
                             {header}

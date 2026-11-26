@@ -3,7 +3,8 @@ import { createRoot } from "react-dom/client";
 import { RouterProvider } from "react-router-dom";
 import { AppProviders } from "@/app/providers";
 import { router } from "@/app/router";
-import "@fontsource-variable/inter";
+import "@fontsource-variable/dm-sans";
+import "@fontsource-variable/bricolage-grotesque";
 import "@/index.css";
 
 const rootElement = document.getElementById("root");
