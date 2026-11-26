@@ -14,6 +14,14 @@ const ACCEPT_JSON = "application/vnd.github+json";
 /** Statuses worth retrying regardless of rate-limit state. */
 const RETRIABLE_STATUS = new Set([500, 502, 503, 504, 429]);
 const BASE_BACKOFF_MS = 500;
+/** A rate-limited token is never retried sooner than this, even if headers are missing. */
+const MIN_BLOCK_MS = 60_000;
+
+interface TokenSlot {
+    value: string;
+    /** Epoch ms until which this token is skipped (0 = usable). */
+    blockedUntil: number;
+}
 const MAX_BACKOFF_MS = 30_000;
 const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_MAX_PAGES = 100;
@@ -100,8 +108,39 @@ export const createGitHubClient = (options: RestClientOptions): GitHubClient => 
     // Last known budget; merged (never wiped) because some responses omit headers.
     let rateLimit: RateLimitInfo | undefined;
 
+    // Primary first, then the optional fallback. A token that hit its rate limit is
+    // skipped until its quota resets, then the primary is preferred again.
+    const slots: TokenSlot[] = [{ value: token, blockedUntil: 0 }];
+    if (options.fallbackToken && options.fallbackToken !== token) {
+        slots.push({ value: options.fallbackToken, blockedUntil: 0 });
+    }
+    let active = 0;
+
+    const usableSlot = (): number => {
+        const now = Date.now();
+        return slots.findIndex((slot) => slot.blockedUntil <= now);
+    };
+
+    const useSlot = (index: number): void => {
+        if (index === active) return;
+        active = index;
+        // The remaining-budget headers belong to the token we just left.
+        rateLimit = undefined;
+    };
+
+    /** Blocks the active token until GitHub says its quota is back. */
+    const blockActive = (headers: Headers): void => {
+        const retryAfter = Number(headers.get("retry-after"));
+        const resetAt = rateLimit?.resetAt instanceof Date ? rateLimit.resetAt.getTime() : 0;
+        const until =
+            Number.isFinite(retryAfter) && headers.has("retry-after")
+                ? Date.now() + retryAfter * 1000
+                : resetAt;
+        slots[active].blockedUntil = Math.max(until, Date.now() + MIN_BLOCK_MS);
+    };
+
     const buildHeaders = (): Record<string, string> => ({
-        Authorization: `Bearer ${token}`,
+        Authorization: `Bearer ${slots[active].value}`,
         Accept: ACCEPT_JSON,
         "User-Agent": USER_AGENT,
         "X-GitHub-Api-Version": API_VERSION,
@@ -161,6 +200,10 @@ export const createGitHubClient = (options: RestClientOptions): GitHubClient => 
         let attempt = 0;
 
         for (;;) {
+            // Prefer the first token that is not rate limited (the primary after its reset).
+            const preferred = slots.length > 1 ? usableSlot() : -1;
+            if (preferred !== -1) useSlot(preferred);
+
             let response: Response;
 
             try {
@@ -185,6 +228,17 @@ export const createGitHubClient = (options: RestClientOptions): GitHubClient => 
                 (status === 403 &&
                     (rateLimit?.remaining === 0 || response.headers.has("retry-after")));
             const retriable = RETRIABLE_STATUS.has(status) || rateLimited;
+
+            if (rateLimited && slots.length > 1) {
+                blockActive(response.headers);
+                const next = usableSlot();
+                if (next !== -1) {
+                    // Switch tokens and repeat the request now; this costs no retry.
+                    await response.body?.cancel().catch(() => undefined);
+                    useSlot(next);
+                    continue;
+                }
+            }
 
             if (retriable && attempt < maxRetries) {
                 // Drain the body so the connection can be reused, then back off.

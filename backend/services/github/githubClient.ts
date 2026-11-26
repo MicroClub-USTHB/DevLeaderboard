@@ -7,6 +7,7 @@ import { createGitHubClient } from "./client.js";
  */
 export const githubClient = createGitHubClient({
     token: config.GitHub.Token,
+    fallbackToken: config.GitHub.FallbackToken,
     apiUrl: config.GitHub.ApiUrl,
     timeoutMs: config.GitHub.TimeoutMs,
 });

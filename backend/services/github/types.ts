@@ -9,6 +9,13 @@ export interface RateLimitInfo {
 
 export interface RestClientOptions {
     token: string;
+    /**
+     * Optional second token, ideally from a different GitHub account (the 5,000/hour
+     * quota is per user, so a second token of the same user shares it). Used only
+     * while the primary is rate limited; the primary is preferred again after its
+     * quota resets.
+     */
+    fallbackToken?: string;
     apiUrl?: string;
     timeoutMs?: number;
     /** How many times a rate-limited, 5xx or timed-out request is retried. */
