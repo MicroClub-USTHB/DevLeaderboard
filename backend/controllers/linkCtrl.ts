@@ -12,6 +12,7 @@ import {
     submitGithubLink,
     type Member,
 } from "../services/link/mcidLink.js";
+import { addMemberToSnapshots } from "../services/leaderboard/memberSync.js";
 import { invalidateDevRoster } from "../services/roster/devRoster.js";
 
 const STATE_COOKIE = "lb_state";
@@ -140,5 +141,7 @@ export const linkGithub: RequestHandler = async (req, res) => {
 
     await submitGithubLink(link, member.id, parsed.username);
     invalidateDevRoster();
+    // Fetch only this member's activity if the stored snapshots lack them; runs after the reply.
+    void addMemberToSnapshots(parsed.username);
     res.json({ github: parsed.username.toLowerCase() });
 };
