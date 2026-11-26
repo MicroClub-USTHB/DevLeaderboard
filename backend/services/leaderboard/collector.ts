@@ -1227,3 +1227,34 @@ export const collectContributions = async (
         orgCreatedAt: org.createdAt,
     };
 };
+
+/**
+ * One person's activity over a window, from GitHub's contribution graph only: one GraphQL
+ * request per yearly chunk (about ten for the whole history) and no repository scan. It
+ * misses what the full scan adds (commits on non-default branches, late-closed PRs, solved
+ * issues), so the numbers can be a little lower until the next full refresh. Returns null when
+ * GitHub has no such user.
+ */
+export const collectMember = async (
+    orgLogin: string,
+    login: string,
+    window: TimeWindow,
+    client: CollectorClient = githubClient,
+): Promise<RawContributor | null> => {
+    const org = await fetchOrgIdentity(orgLogin, client);
+    let total: RawContributor | undefined;
+
+    for (const chunk of splitWindow(window)) {
+        const [{ user }] = await queryContributionBatch([{ id: "", login, avatarUrl: "" }], org.id, chunk, client);
+        if (user === null || user === undefined) return null;
+
+        const collection = user.contributionsCollection;
+        total ??= { key: user.id, login: user.login, avatarUrl: user.avatarUrl, commits: 0, pullRequests: 0, reviews: 0, issues: 0 };
+        total.commits += collection?.totalCommitContributions ?? 0;
+        total.pullRequests += collection?.totalPullRequestContributions ?? 0;
+        total.reviews += collection?.totalPullRequestReviewContributions ?? 0;
+        total.issues += collection?.totalIssueContributions ?? 0;
+    }
+
+    return total ?? null;
+};
