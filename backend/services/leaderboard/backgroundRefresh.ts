@@ -1,15 +1,32 @@
 import { logger } from "../../lib/logger.js";
+import { GitHubError } from "../github/errors.js";
 import type { CustomRange, Period } from "./periods.js";
 import { rangeKeyFor } from "./periods.js";
 import { syncLeaderboard } from "./sync.js";
 
 /** After a failed run, leave the target alone for this long (protects quota). */
 const FAILURE_COOLDOWN_MS = 5 * 60_000;
+/** A rate-limit failure waits for GitHub's reset instead, but never longer than this. */
+const MAX_RATE_LIMIT_COOLDOWN_MS = 60 * 60_000;
 /** Upper bound on simultaneous GitHub collections started from reads. */
 const MAX_CONCURRENT = 2;
 
-const lastFailure = new Map<string, number>();
+/** Epoch ms until which a failed target is left alone. */
+const retryAfter = new Map<string, number>();
 const running = new Set<string>();
+
+/** Rate limited: retry when the quota is back. Anything else: the flat cooldown. */
+const cooldownFor = (error: unknown): number => {
+    if (error instanceof GitHubError) {
+        const resetAt = error.rateLimit?.resetAt;
+        const limited = error.status === 429 || (error.status === 403 && error.rateLimit?.remaining === 0);
+        if (limited && resetAt instanceof Date) {
+            const wait = resetAt.getTime() - Date.now() + 5_000;
+            return Math.min(Math.max(wait, FAILURE_COOLDOWN_MS), MAX_RATE_LIMIT_COOLDOWN_MS);
+        }
+    }
+    return FAILURE_COOLDOWN_MS;
+};
 
 /**
  * Keeps snapshots current without ever blocking a read.
@@ -30,16 +47,16 @@ export const requestRefresh = (
 
     if (running.has(key) || running.size >= MAX_CONCURRENT) return;
 
-    const failedAt = lastFailure.get(key);
-    if (failedAt !== undefined && Date.now() - failedAt < FAILURE_COOLDOWN_MS) return;
+    const blockedUntil = retryAfter.get(key);
+    if (blockedUntil !== undefined && Date.now() < blockedUntil) return;
 
     running.add(key);
     void syncLeaderboard(orgLogin, period, { customRange })
         .then(() => {
-            lastFailure.delete(key);
+            retryAfter.delete(key);
         })
         .catch((error: unknown) => {
-            lastFailure.set(key, Date.now());
+            retryAfter.set(key, Date.now() + cooldownFor(error));
             logger.error("background refresh failed", { key, err: error });
         })
         .finally(() => {

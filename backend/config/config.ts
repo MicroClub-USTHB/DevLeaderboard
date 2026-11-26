@@ -43,6 +43,7 @@ function loadConfig(): Config {
         },
         GitHub: {
             Token: process.env.GITHUB_TOKEN ?? "",
+            FallbackToken: process.env.GITHUB_TOKEN_FALLBACK?.trim() || undefined,
             ApiUrl: process.env.GITHUB_API_URL ?? defaults.GITHUB_API_URL,
             TimeoutMs: process.env.GITHUB_TIMEOUT_MS ?? defaults.GITHUB_TIMEOUT_MS,
         },

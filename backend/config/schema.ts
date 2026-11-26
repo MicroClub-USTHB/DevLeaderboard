@@ -50,6 +50,8 @@ const rateLimitConfigSchema = z.object({
 const githubConfigSchema = z.object({
     // No default on purpose: leaderboard refresh is pointless without credentials.
     Token: z.string().min(1, "GITHUB_TOKEN is required"),
+    // Second token (another account) used while the primary is rate limited.
+    FallbackToken: z.string().min(1).optional(),
     ApiUrl: z.string().url("GITHUB_API_URL must be a valid URL"),
     TimeoutMs: z.coerce.number().int().positive(),
 });
