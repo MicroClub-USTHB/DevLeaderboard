@@ -8,7 +8,10 @@ export interface RateLimitInfo {
 }
 
 export interface RestClientOptions {
-    token: string;
+    /** Personal access token. Optional when `appAuth` is set. */
+    token?: string;
+    /** GitHub App installation tokens; tried first because they have their own, larger quota. */
+    appAuth?: { getToken: () => Promise<string>; invalidate: () => void };
     /**
      * Optional second token, ideally from a different GitHub account (the 5,000/hour
      * quota is per user, so a second token of the same user shares it). Used only
