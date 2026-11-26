@@ -7,9 +7,10 @@ import { defaultCustomRange, validateRange, type DateRange } from "@/shared/lib/
 import { formatDate, formatRelativeTime } from "@/shared/lib/format";
 import { Button } from "@/shared/ui/Button";
 import { EmptyState, ErrorState, Skeleton } from "@/shared/ui/States";
-import { DEFAULT_PERIOD, DEFAULT_SCOPE, MAX_CUSTOM_DAYS, PAGE_SIZE, SCOPE_LABELS } from "../constants";
+import { DEFAULT_PERIOD, DEFAULT_SCOPE, MAX_CUSTOM_DAYS, PAGE_SIZE } from "../constants";
 import { useLeaderboard } from "../api";
 import { LinkGithubPanel } from "@/features/link/components/LinkGithubPanel";
+import { LeaderboardHero } from "../components/LeaderboardHero";
 import { Pagination } from "../components/Pagination";
 import { ScopeSelector } from "../components/ScopeSelector";
 import { ScoreCards } from "../components/ScoreCards";
@@ -143,14 +144,16 @@ export const LeaderboardPage = (): ReactNode => {
 
     return (
         <div className="space-y-6">
-            {/* Header */}
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-                <div>
-                    <p className="text-xs font-medium uppercase tracking-wide text-accent-400">
-                        {SCOPE_LABELS[scope]}
-                    </p>
-                    <h1 className="mt-1 text-3xl font-semibold tracking-tight">{org}</h1>
-                </div>
+            <LeaderboardHero org={org} scope={scope} snapshot={snapshot} offset={offset} />
+
+            {/* Toolbar: who the board counts, and the time window */}
+            <div
+                id="board"
+                className="flex flex-col gap-4 pt-2 sm:flex-row sm:items-end sm:justify-between"
+            >
+                <h2 className="font-display text-[1.75rem] font-bold leading-[1.15] tracking-[-0.05em]">
+                    Rankings
+                </h2>
                 <div className="flex flex-wrap items-end gap-2">
                     <ScopeSelector value={scope} onChange={changeScope} />
                     <TimelineSelector
