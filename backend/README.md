@@ -5,8 +5,8 @@ an organization across **all of its repositories**, ranks them with a composite 
 result in MongoDB, and serves it over a small HTTP API — so the read path never talks to GitHub.
 
 - **Stack:** Express 5 · TypeScript (ESM) · Mongoose
-- **Data source:** GitHub GraphQL API (contributions) with REST for member discovery and outside
-  collaborators
+- **Data source:** GitHub REST API (commits across every branch) plus GraphQL for PRs, reviews,
+  issues and member discovery
 - **Refresh model:** scheduled (cron) + public manual refresh → Mongo cache → cheap reads with
   ETag/304
 - **Default organization:** `MicroClub-USTHB`, refreshed at boot
@@ -40,11 +40,12 @@ Requirements:
   (all branches, PRs, reviews, issues) instead of relying on the contribution graph.
 
 **Collection scope.** Every visible repository is scanned, forks included, and every branch is
-read. Commits are deduplicated by SHA across branches and repositories. PRs count when they were
-opened or closed/merged in the window; reviews count once per person per PR; issues count when they
-were opened or solved in the window (the opener and closer can both receive credit). This goes
-beyond GitHub's contribution graph, which only counts default-branch/`gh-pages` commits, PRs opened,
-issues opened, and (with `read:user`) private activity.
+read. Commits are counted directly from the repository scan (default branch, `gh-pages` and every
+other branch) and deduplicated by SHA across branches and repositories — GitHub's contribution graph
+is not used for commit counts, because it omits commits it does not credit to a contributor. PRs
+count when they were opened or closed/merged in the window; reviews count once per person per PR;
+issues count when they were opened or solved in the window (the opener and closer can both receive
+credit). PR, review and issue totals still come from GraphQL's `contributionsCollection`.
 
 **Private contributions.** A leaderboard can only rank activity the token can see. If a contributor
 works in a private repository the token cannot access, they will not appear. Grant the token access
@@ -289,20 +290,21 @@ Key decisions:
   string-interpolated. Batches run with bounded concurrency (4); repository contributor scans use
   5.
 - **All-branch repository scan:** every visible repository (forks included) is read in two passes.
-  The first pass records default/`gh-pages` commit SHAs and any private fallback counts; the second
-  pass adds non-default-branch commits, PRs closed/merged after being opened, and solved issues.
-  Commit SHAs are deduplicated globally so merged commits are never counted twice. Scans use bounded
-  concurrency (3 repositories, 4 branches).
+  The first pass counts default/`gh-pages` commits and records their SHAs; the second pass adds
+  non-default-branch commits, PRs closed/merged after being opened, and solved issues. Every commit
+  SHA is checked against one global set before being credited, so merged commits are never counted
+  twice, including across public/private and external repos. Scans use bounded concurrency (3
+  repositories, 4 branches).
 - **Member discovery:** `membersWithRole` when the token may read it; otherwise public members +
   contributors of every visible repository. Repository contributors are unioned on **both** paths,
   and the repository scan also discovers PR authors, reviewers and issue participants who never
   committed. Outside collaborators come from REST `/orgs/{org}/outside_collaborators` (no GraphQL
   field exists); a `403` there is expected for non-owner tokens and is not reported as a snapshot
   warning.
-- **Private repositories:** listed when the token can see them. With `read:user`, GitHub's
-  `contributionsCollection` already includes private activity, so only the extras are merged.
-  Without it (fine-grained tokens), the full all-branch scan of private repositories supplies every
-  metric, so private work is still ranked instead of silently disappearing.
+- **Private repositories:** listed when the token can see them. Commits are always counted by the
+  direct scan. With `read:user`, GraphQL also supplies PR, review and issue totals and the scan adds
+  only the extras; without it (fine-grained tokens), the full all-branch scan supplies every metric,
+  so private work is still ranked instead of silently disappearing.
 - **External projects:** repositories named in `LEADERBOARD_EXTRA_REPOS` are resolved through
   GraphQL and marked `external`. They are scanned only after every organization repository, so the
   complete org commit set can suppress duplicate SHAs. Their activity is always merged from the
