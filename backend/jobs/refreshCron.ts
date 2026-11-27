@@ -7,8 +7,10 @@ import { syncLeaderboard } from "../services/leaderboard/sync.js";
 
 /**
  * `custom` cannot be scheduled: it needs a range from the caller. Both fixed
- * periods are refreshed, and the all-time snapshot's 24h freshness window
- * means the 6h cron only recomputes it once a day.
+ * periods are force-refreshed on every tick, and `all` runs after `month`, so
+ * the all-time window ends at or after the monthly one. Without the force, the
+ * 24h read-cache TTL would let the all-time snapshot lag the 15-minute monthly
+ * one, and month could report activity that all-time does not.
  */
 const SCHEDULED_PERIODS: readonly Period[] = ["month", "all"];
 
@@ -32,7 +34,7 @@ const refreshOrg = async (orgLogin: string): Promise<OrgRefreshOutcome[]> => {
 
     for (const period of SCHEDULED_PERIODS) {
         try {
-            const result = await syncLeaderboard(orgLogin, period);
+            const result = await syncLeaderboard(orgLogin, period, { force: true });
             outcomes.push({
                 orgLogin: result.orgLogin,
                 period,

@@ -138,7 +138,8 @@ A non-forced refresh serves a cached snapshot while it is fresh:
 | `custom` | 24 hours |
 
 `force=1` (what the UI's **Refresh** button sends) bypasses the cache and always recomputes.
-Concurrent refreshes for the same key coalesce into a single GitHub run.
+Concurrent refreshes for the same key coalesce into a single GitHub run. The scheduled refresh
+always forces `month` and `all`, so these freshness windows only throttle read-triggered refreshes.
 
 ---
 
@@ -241,8 +242,9 @@ GitHub failures are mapped and never surface as `500` from this endpoint:
 
 ## Scheduling
 
-- `LEADERBOARD_CRON` (default every 6 hours) refreshes `month` and `all` for every org in
-  `LEADERBOARD_ORGS`.
+- `LEADERBOARD_CRON` (default every 6 hours) force-refreshes `month` and `all` for every org in
+  `LEADERBOARD_ORGS`, so both fixed periods are rebuilt on every tick and their windows end at
+  roughly the same instant.
 - The server runs the same refresh **once at boot**, so the default org has a snapshot before the
   first visitor arrives.
 - Runs are **sequential** with overlap protection (`noOverlap`), and the timer is `unref`'d so it

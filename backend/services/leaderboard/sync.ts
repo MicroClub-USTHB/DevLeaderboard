@@ -16,7 +16,8 @@ const HOUR_MS = 60 * MINUTE_MS;
 /**
  * How long a cached snapshot is served before a non-forced refresh recomputes
  * it. The monthly view is cheap and changes often; all-time and custom ranges
- * cost many GitHub calls, so they are cached for a day.
+ * cost many GitHub calls, so they are cached for a day. The scheduled refresh
+ * bypasses this with `force`, so both fixed periods are rebuilt on every tick.
  */
 const FRESHNESS_MS: Readonly<Record<Period, number>> = {
     month: 15 * MINUTE_MS,
