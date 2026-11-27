@@ -3,6 +3,7 @@ import type { LeaderboardEntry } from "@/shared/api/types";
 import { cn } from "@/shared/lib/cn";
 import { formatNumber } from "@/shared/lib/format";
 import { rankZone, type RankZone } from "../rankZone";
+import { ContributorLink } from "./ContributorLink";
 import { RankBadge } from "./RankBadge";
 
 interface ScoreCardsProps {
@@ -33,15 +34,13 @@ export const ScoreCards = ({ entries, total }: ScoreCardsProps): ReactNode => (
                 >
                     <div className="flex items-center gap-3">
                         <RankBadge rank={entry.rank} zone={zone} />
-                        <img
-                            src={entry.avatarUrl}
-                            alt=""
-                            loading="lazy"
-                            className="size-8 shrink-0 rounded-full bg-overlay object-cover"
+                        <ContributorLink
+                            login={entry.login}
+                            avatarUrl={entry.avatarUrl}
+                            className="flex-1"
+                            avatarClassName="bg-overlay"
+                            nameClassName="text-sm font-medium text-ink"
                         />
-                        <span className="min-w-0 flex-1 truncate text-sm font-medium text-ink">
-                            {entry.login}
-                        </span>
                         <span className="text-sm font-semibold text-ink tabular">
                             {formatNumber(entry.score)}
                         </span>

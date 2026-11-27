@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { Trophy } from "lucide-react";
 import type { LeaderboardSnapshot, Scope } from "@/shared/api/types";
 import { formatDate, formatNumber, formatRelativeTime } from "@/shared/lib/format";
+import { ContributorLink } from "./ContributorLink";
 
 interface LeaderboardHeroProps {
     org: string;
@@ -85,15 +86,13 @@ export const LeaderboardHero = ({
                                 <span className="grid size-6 shrink-0 place-items-center rounded-md bg-[#303a67] text-xs font-bold tabular text-[#d4ddff]">
                                     {entry.rank}
                                 </span>
-                                <img
-                                    src={entry.avatarUrl}
-                                    alt=""
-                                    loading="lazy"
-                                    className="size-8 shrink-0 rounded-full bg-hero-line object-cover"
+                                <ContributorLink
+                                    login={entry.login}
+                                    avatarUrl={entry.avatarUrl}
+                                    className="flex-1 focus-visible:outline-[#d4ddff]"
+                                    avatarClassName="bg-hero-line"
+                                    nameClassName="text-sm font-semibold text-white"
                                 />
-                                <span className="min-w-0 flex-1 truncate text-sm font-semibold">
-                                    {entry.login}
-                                </span>
                                 <span className="text-sm font-bold tabular text-[#9cebd1]">
                                     {formatNumber(entry.score)}
                                 </span>
