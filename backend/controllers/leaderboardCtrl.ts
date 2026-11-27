@@ -16,6 +16,7 @@ import {
     type Period,
 } from "../services/leaderboard/periods.js";
 import { requestRefresh } from "../services/leaderboard/backgroundRefresh.js";
+import { buildDevBoard } from "../services/leaderboard/devBoard.js";
 import { getDevRoster } from "../services/roster/devRoster.js";
 import { syncLeaderboard } from "../services/leaderboard/sync.js";
 import type { SyncResult } from "../services/leaderboard/types.js";
@@ -179,9 +180,8 @@ export const getLeaderboard = async (req: Request, res: Response): Promise<void>
         }
         const roster = await getDevRoster(config.Mcid);
         audience = roster.fingerprint;
-        contributors = contributors
-            .filter((contributor) => roster.logins.has(contributor.login.toLowerCase()))
-            .map((contributor, index) => ({ ...contributor, rank: index + 1 }));
+        // Every Dev member is listed, including those with no activity in the window.
+        contributors = buildDevBoard(contributors, roster.logins);
     }
 
     const entries = contributors.slice(offset, offset + limit);
