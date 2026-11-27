@@ -32,7 +32,9 @@ const refreshOrg = async (orgLogin: string): Promise<OrgRefreshOutcome[]> => {
 
     for (const period of SCHEDULED_PERIODS) {
         try {
-            const result = await syncLeaderboard(orgLogin, period);
+            const result = await syncLeaderboard(orgLogin, period, {
+                force: period === "all",
+            });
             outcomes.push({
                 orgLogin: result.orgLogin,
                 period,
