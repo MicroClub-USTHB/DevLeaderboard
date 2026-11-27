@@ -292,12 +292,17 @@ const fetchPublicMembers = async (
 const fetchOrgRepos = async (
     orgLogin: string,
     client: CollectorClient,
+    warnings: string[] = [],
 ): Promise<RepoRest[]> => {
     const reposPath = `/orgs/${encodeURIComponent(orgLogin)}/repos?per_page=100&type=all`;
     try {
         return await drain(client.paginateRest<RepoRest>(reposPath));
     } catch (error) {
-        if (isSkippableRepoError(error)) return [];
+        if (isSkippableRepoError(error)) {
+            // Commits now come from the scan, so losing the repo list must be visible.
+            warnings.push(`Could not list repositories: ${errorDetail(error)}`);
+            return [];
+        }
         throw error;
     }
 };
@@ -441,7 +446,7 @@ const fetchOrgWithMembers = async (
         const org = await fetchOrgIdentity(orgLogin, client);
         const [publicMembers, orgRepos] = await Promise.all([
             fetchPublicMembers(orgLogin, client),
-            fetchOrgRepos(orgLogin, client),
+            fetchOrgRepos(orgLogin, client, warnings),
         ]);
         const extras = await fetchExtraRepos(extraRepos, client, warnings);
         const repos = mergeRepos(orgRepos, extras);
@@ -458,7 +463,7 @@ const fetchOrgWithMembers = async (
     }
 
     const { org, members } = memberResult;
-    const orgRepos = await fetchOrgRepos(orgLogin, client);
+    const orgRepos = await fetchOrgRepos(orgLogin, client, warnings);
     const extras = await fetchExtraRepos(extraRepos, client, warnings);
     const repos = mergeRepos(orgRepos, extras);
 
@@ -578,13 +583,10 @@ interface ScanContext {
     privateExtra: Map<string, ActivityCounts>;
     privateFull: Map<string, ActivityCounts>;
     externalFull: Map<string, ActivityCounts>;
-    /** Commits reachable from a default/gh-pages branch, already counted by GraphQL. */
-    baselineCommits: Set<string>;
+    /** Every commit credited by the direct scan, across all repos and modes. */
+    countedCommits: Set<string>;
     /** Every commit seen in an organization repo, across all branches. */
     orgCommits: Set<string>;
-    seenExtraCommits: Set<string>;
-    seenFullCommits: Set<string>;
-    seenExternalCommits: Set<string>;
     seenExtraPulls: Set<string>;
     seenFullPulls: Set<string>;
     seenFullReviews: Set<string>;
@@ -671,9 +673,10 @@ const forEachCommit = async (
 };
 
 /**
- * Lists branches and reads the branches GitHub already counts (default and
- * gh-pages). Their commit SHAs form the baseline used later to avoid counting
- * merged commits twice.
+ * Lists branches and reads the default/gh-pages branches. Their commits are
+ * counted directly here — GitHub's contribution graph is not authoritative for
+ * commit counts, so a commit the graph omits must still reach the board. Their
+ * SHAs are also recorded so a merge of the same commit cannot count twice.
  */
 const prepareRepo = async (repo: RepoRest, context: ScanContext): Promise<RepoPlan> => {
     const branches = await listBranches(repo, context);
@@ -688,31 +691,26 @@ const prepareRepo = async (repo: RepoRest, context: ScanContext): Promise<RepoPl
 
     await mapWithConcurrency([...baselineBranches], BRANCH_CONCURRENCY, async (branch) => {
         await forEachCommit(repo, branch, context, (commit) => {
-            if (!external) {
-                context.baselineCommits.add(commit.sha);
-                context.orgCommits.add(commit.sha);
-            }
-
             const user = commitUser(commit);
-            if (user === undefined) return;
-            recordUser(context, user);
+            if (user !== undefined) recordUser(context, user);
 
-            if (full === null) return;
+            if (!external) context.orgCommits.add(commit.sha);
+
+            // REST is the source of truth for commits: one shared set dedupes
+            // SHAs across branches, repos and the extra/full counting paths.
+            if (context.countedCommits.has(commit.sha)) return;
+            context.countedCommits.add(commit.sha);
+
+            if (full === null) {
+                if (user !== undefined && extra !== null) addActivity(extra, user, "commits");
+                return;
+            }
 
             // External repos are never part of the org contribution graph.
             // Skip only commits that an org repo already contributed, so a
             // fork or mirror cannot count the same commit twice.
-            if (external) {
-                if (context.orgCommits.has(commit.sha)) return;
-                if (context.seenExternalCommits.has(commit.sha)) return;
-                context.seenExternalCommits.add(commit.sha);
-                addActivity(full, user, "commits");
-                return;
-            }
-
-            if (context.seenFullCommits.has(commit.sha)) return;
-            context.seenFullCommits.add(commit.sha);
-            addActivity(full, user, "commits");
+            if (external && context.orgCommits.has(commit.sha)) return;
+            if (user !== undefined) addActivity(full, user, "commits");
         });
     });
 
@@ -736,27 +734,12 @@ const scanExtraBranches = async (plan: RepoPlan, context: ScanContext): Promise<
             if (user === undefined) return;
             recordUser(context, user);
 
-            if (full !== null) {
-                if (external) {
-                    if (context.orgCommits.has(commit.sha)) return;
-                    if (context.seenExternalCommits.has(commit.sha)) return;
-                    context.seenExternalCommits.add(commit.sha);
-                    addActivity(full, user, "commits");
-                    return;
-                }
+            if (context.countedCommits.has(commit.sha)) return;
+            if (external && context.orgCommits.has(commit.sha)) return;
+            context.countedCommits.add(commit.sha);
 
-                if (!context.seenFullCommits.has(commit.sha)) {
-                    context.seenFullCommits.add(commit.sha);
-                    addActivity(full, user, "commits");
-                }
-            }
-
-            if (extra === null) return;
-            if (context.baselineCommits.has(commit.sha)) return;
-            if (context.seenExtraCommits.has(commit.sha)) return;
-
-            context.seenExtraCommits.add(commit.sha);
-            addActivity(extra, user, "commits");
+            if (full !== null) addActivity(full, user, "commits");
+            else if (extra !== null) addActivity(extra, user, "commits");
         });
     });
 };
@@ -941,11 +924,8 @@ const scanRepos = async (
         privateExtra: new Map(),
         privateFull: new Map(),
         externalFull: new Map(),
-        baselineCommits: new Set(),
+        countedCommits: new Set(),
         orgCommits: new Set(),
-        seenExtraCommits: new Set(),
-        seenFullCommits: new Set(),
-        seenExternalCommits: new Set(),
         seenExtraPulls: new Set(),
         seenFullPulls: new Set(),
         seenFullReviews: new Set(),
@@ -1185,7 +1165,9 @@ export const collectContributions = async (
                             key: result.id,
                             login: result.login,
                             avatarUrl: result.avatarUrl,
-                            commits: collection?.totalCommitContributions ?? 0,
+                            // Commits come from the direct repository scan; GitHub's
+                            // contribution graph omits commits it does not credit.
+                            commits: 0,
                             pullRequests: collection?.totalPullRequestContributions ?? 0,
                             reviews: collection?.totalPullRequestReviewContributions ?? 0,
                             issues: collection?.totalIssueContributions ?? 0,
@@ -1193,7 +1175,6 @@ export const collectContributions = async (
                         return;
                     }
 
-                    existing.commits += collection?.totalCommitContributions ?? 0;
                     existing.pullRequests += collection?.totalPullRequestContributions ?? 0;
                     existing.reviews += collection?.totalPullRequestReviewContributions ?? 0;
                     existing.issues += collection?.totalIssueContributions ?? 0;

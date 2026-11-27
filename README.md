@@ -203,10 +203,11 @@ frontend/
 ## How it works
 
 1. **Collect** — the scheduler (or a public `POST /refresh`) reads every visible repository across
-   every branch, discovers contributors from commits, PRs, reviews and issues, then queries
-   `contributionsCollection` in batches for the contribution-graph baseline. A direct repository
-   scan adds what GraphQL leaves out: non-default-branch commits, PRs closed/merged after they were
-   opened, and issues solved by someone other than the opener. Any repository listed in
+   every branch and counts every commit directly, deduplicated by SHA. Contributors are discovered
+   from commits, PRs, reviews and issues. GraphQL's `contributionsCollection` supplies PR, review
+   and issue totals, but not commits: GitHub's contribution graph omits commits it does not credit,
+   so relying on it would undercount. The scan also adds PRs closed/merged after they were opened
+   and issues solved by someone other than the opener. Any repository listed in
    `LEADERBOARD_EXTRA_REPOS` is scanned the same way and merged in, even though it is outside the
    organization. Multi-year windows are split into ≤364-day chunks because GitHub caps a single
    range at one year.
