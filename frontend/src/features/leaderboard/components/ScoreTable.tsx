@@ -3,6 +3,7 @@ import type { LeaderboardEntry } from "@/shared/api/types";
 import { cn } from "@/shared/lib/cn";
 import { formatNumber } from "@/shared/lib/format";
 import { rankZone, type RankZone } from "../rankZone";
+import { ContributorLink } from "./ContributorLink";
 import { RankBadge } from "./RankBadge";
 
 interface ScoreTableProps {
@@ -59,17 +60,13 @@ export const ScoreTable = ({ entries, total }: ScoreTableProps): ReactNode => (
                                 <RankBadge rank={entry.rank} zone={zone} />
                             </td>
                             <td className="px-4 py-3">
-                                <div className="flex items-center gap-3">
-                                    <img
-                                        src={entry.avatarUrl}
-                                        alt=""
-                                        loading="lazy"
-                                        className="size-8 shrink-0 rounded-full bg-overlay object-cover"
-                                    />
-                                    <span className="truncate text-sm font-medium text-ink">
-                                        {entry.login}
-                                    </span>
-                                </div>
+                                <ContributorLink
+                                    login={entry.login}
+                                    avatarUrl={entry.avatarUrl}
+                                    className="w-fit max-w-full"
+                                    avatarClassName="bg-overlay"
+                                    nameClassName="text-sm font-medium text-ink"
+                                />
                             </td>
                             <td className={`${cellClass} text-right`}>
                                 {formatNumber(entry.commits)}
