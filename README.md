@@ -70,12 +70,12 @@ The repo contains both halves of the product:
   Premier-League-style zones: the top four rows are green, the bottom three are red.
 - **Automatic first snapshot.** If a period has never been collected, the page gets a `202`, starts
   the refresh itself, and polls until the snapshot lands.
-- **Caching with an explicit escape hatch.** The server serves `month` snapshots for 60 seconds and
+- **Caching with an explicit escape hatch.** The server serves `month` snapshots for 15 minutes and
   `all`/`custom` snapshots for 24 hours; the **Refresh** button sends `force=1` and always
   recomputes.
 - **Resilient by design:** a stale snapshot stays on screen when GitHub or the API is
   down, with a retry hint and the server's `Retry-After`.
-- **Meta panel:** scoring weights, GitHub rate-limit budget and snapshot freshness.
+- **Meta panel:** scoring weights and snapshot freshness.
 
 ## Link your GitHub (Dev tab)
 
@@ -229,7 +229,7 @@ All responses are JSON; errors use `{ "error": "..." }`.
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/leaderboard/:org` | Snapshot from Mongo (never hits GitHub). `?period=month\|all\|custom&limit=1..100&offset=0..`, plus `from`/`to` for `custom`. Supports ETag/304 |
-| `GET` | `/leaderboard/:org/meta` | Score weights, GitHub rate-limit budget, organization creation date, snapshot freshness |
+| `GET` | `/leaderboard/:org/meta` | Score weights, organization creation date, snapshot freshness |
 | `POST` | `/leaderboard/:org/refresh` | Trigger a refresh (spends GitHub quota). `?period=…`, `from`/`to` for custom, `force=1` to bypass the cache |
 | `GET` | `/health` | `{ "status": "ok" }` |
 

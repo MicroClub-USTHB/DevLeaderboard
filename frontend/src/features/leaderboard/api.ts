@@ -95,7 +95,7 @@ export const useLeaderboard = (params: LeaderboardParams) =>
         },
     });
 
-/** Weights, GitHub quota and snapshot freshness for the meta panel. */
+/** Weights and snapshot freshness for the meta panel. */
 export const useLeaderboardMeta = (org: string) =>
     useQuery<LeaderboardMeta>({
         queryKey: ["leaderboard-meta", org.toLowerCase()],
