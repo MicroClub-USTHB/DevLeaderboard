@@ -513,7 +513,8 @@ interface CommitRest {
     committer: RestUser | null;
     /** Commit metadata; branch scans filter by date server-side instead. */
     commit?: {
-        author: { date: string } | null;
+        message?: string;
+        author: { name?: string; email?: string; date: string } | null;
         committer: { date: string } | null;
     };
 }
@@ -556,6 +557,30 @@ const toRestUser = (user: RestUser | null | undefined): UserNode | undefined => 
 const commitUser = (commit: CommitRest): UserNode | undefined =>
     toRestUser(commit.author) ?? toRestUser(commit.committer);
 
+/**
+ * Stable identity across a rebase: rewriting keeps the Git author metadata,
+ * authored date and message while changing the SHA. The REST `author` field is
+ * deliberately not used — it can be null for unlinked emails and falls back to
+ * the committer, which a rebase does change.
+ */
+const commitIdentity = (commit: CommitRest): string => {
+    const meta = commit.commit?.author;
+    const author = meta?.email ?? meta?.name ?? "";
+    const authoredAt = meta?.date ?? commit.commit?.committer?.date ?? "";
+    return `${author}\u0000${authoredAt}\u0000${commit.commit?.message ?? ""}`;
+};
+
+/** Records base-branch commits so rewritten PR commits can be recognised. */
+const recordBaseCommit = (context: ScanContext, commit: CommitRest): void => {
+    const identity = commitIdentity(commit);
+    context.baseCommitKeys.add(identity);
+    context.baseCommitIdentityBySha.set(commit.sha, identity);
+    // GitHub appends "(#N)" to the squash commit's title; a body may follow.
+    const title = (commit.commit?.message ?? "").split("\n", 1)[0] ?? "";
+    const squash = /\(#(\d+)\)\s*$/.exec(title);
+    if (squash !== null) context.squashMergeNumbers.set(commit.sha, Number(squash[1]));
+};
+
 const timeOf = (value: string): number => Date.parse(value);
 
 /** Counts attributed to one account during a repository scan. */
@@ -594,6 +619,12 @@ interface ScanContext {
     externalFull: Map<string, ActivityCounts>;
     /** Every commit credited by the direct scan, across all repos and modes. */
     countedCommits: Set<string>;
+    /** Identities of commits credited from branch scans, for rebase detection. */
+    baseCommitKeys: Set<string>;
+    /** Identity of each base-branch commit by SHA, used to identify a rebase merge. */
+    baseCommitIdentityBySha: Map<string, string>;
+    /** Squash commits on base branches, keyed by SHA with their PR number. */
+    squashMergeNumbers: Map<string, number>;
     /** Every commit seen in an organization repo, across all branches. */
     orgCommits: Set<string>;
     seenExtraPulls: Set<string>;
@@ -711,6 +742,7 @@ const prepareRepo = async (repo: RepoRest, context: ScanContext): Promise<RepoPl
             // SHAs across branches, repos and the extra/full counting paths.
             if (context.countedCommits.has(commit.sha)) return;
             context.countedCommits.add(commit.sha);
+            recordBaseCommit(context, commit);
 
             if (full === null) {
                 if (user !== undefined && extra !== null) addActivity(extra, user, "commits");
@@ -748,6 +780,7 @@ const scanExtraBranches = async (plan: RepoPlan, context: ScanContext): Promise<
             if (context.countedCommits.has(commit.sha)) return;
             if (external && context.orgCommits.has(commit.sha)) return;
             context.countedCommits.add(commit.sha);
+            recordBaseCommit(context, commit);
 
             if (full !== null) addActivity(full, user, "commits");
             else if (extra !== null) addActivity(extra, user, "commits");
@@ -842,10 +875,20 @@ const scanMergedPullCommits = async (
     // the merge SHA as the last rewritten commit. They are already counted.
     if (commits.some((commit) => commit.sha === mergeSha)) return;
 
-    // A true merge leaves every PR commit reachable from a branch, so the scan
-    // already credited them. Only a squash (or a merge whose source branch is
-    // gone) leaves commits the scan has not seen.
-    if (commits.every((commit) => context.countedCommits.has(commit.sha))) return;
+    const squash = context.squashMergeNumbers.get(mergeSha) === pull.number;
+    const allShasCounted = commits.every((commit) => context.countedCommits.has(commit.sha));
+    // A rebase merge points `merge_commit_sha` at the last rewritten commit.
+    // Its Git author metadata, date and message match that original PR commit.
+    const mergeIdentity = context.baseCommitIdentityBySha.get(mergeSha);
+    const rebased = mergeIdentity !== undefined &&
+        commits.some((commit) => commitIdentity(commit) === mergeIdentity);
+
+    if (allShasCounted || rebased) {
+        // The squash commit on the base branch duplicates the originals even
+        // when they were also scanned from a surviving head branch.
+        if (squash) deductSquashCommit(context, pull);
+        return;
+    }
 
     for (const commit of commits) creditCommit(plan, context, commit);
     deductSquashCommit(context, pull);
@@ -1043,6 +1086,9 @@ const scanRepos = async (
         privateFull: new Map(),
         externalFull: new Map(),
         countedCommits: new Set(),
+        baseCommitKeys: new Set(),
+        baseCommitIdentityBySha: new Map(),
+        squashMergeNumbers: new Map(),
         orgCommits: new Set(),
         seenExtraPulls: new Set(),
         seenFullPulls: new Set(),

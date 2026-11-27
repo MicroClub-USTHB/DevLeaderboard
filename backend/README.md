@@ -45,7 +45,10 @@ other branch) and deduplicated by SHA across branches and repositories — GitHu
 is not used for commit counts, because it omits commits it does not credit to a contributor. PRs
 count when they were opened or closed/merged in the window; reviews count once per person per PR;
 issues count when they were opened or solved in the window (the opener and closer can both receive
-credit). PR, review and issue totals still come from GraphQL's `contributionsCollection`.
+credit). For merged PRs whose head branch is gone or lives in a fork, the original commits are read
+from `/pulls/{n}/commits`; already-credited commits (including rebased copies, matched by author,
+message and authored date) are skipped. PR, review and issue totals still come from GraphQL's
+`contributionsCollection`.
 
 **Private contributions.** A leaderboard can only rank activity the token can see. If a contributor
 works in a private repository the token cannot access, they will not appear. Grant the token access
@@ -291,10 +294,12 @@ Key decisions:
   5.
 - **All-branch repository scan:** every visible repository (forks included) is read in two passes.
   The first pass counts default/`gh-pages` commits and records their SHAs; the second pass adds
-  non-default-branch commits, PRs closed/merged after being opened, and solved issues. Every commit
-  SHA is checked against one global set before being credited, so merged commits are never counted
-  twice, including across public/private and external repos. Scans use bounded concurrency (3
-  repositories, 4 branches).
+  non-default-branch commits, PRs closed/merged after being opened, and solved issues. Merged PRs
+  add their original commits from `/pulls/{n}/commits` when the head branch is not scannable. Every
+  commit SHA is checked against one global set before being credited. A rebase merge is recognised
+  when `merge_commit_sha` is a rewritten copy of a PR commit (matched by Git author metadata, date
+  and message); its originals are then treated as already credited, which is correct because GitHub
+  rewrites every non-empty commit. Scans use bounded concurrency (3 repositories, 4 branches).
 - **Member discovery:** `membersWithRole` when the token may read it; otherwise public members +
   contributors of every visible repository. Repository contributors are unioned on **both** paths,
   and the repository scan also discovers PR authors, reviewers and issue participants who never
