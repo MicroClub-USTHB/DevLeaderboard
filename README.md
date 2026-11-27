@@ -207,10 +207,12 @@ frontend/
    from commits, PRs, reviews and issues. GraphQL's `contributionsCollection` supplies PR, review
    and issue totals, but not commits: GitHub's contribution graph omits commits it does not credit,
    so relying on it would undercount. The scan also adds PRs closed/merged after they were opened
-   and issues solved by someone other than the opener. Any repository listed in
-   `LEADERBOARD_EXTRA_REPOS` is scanned the same way and merged in, even though it is outside the
-   organization. Multi-year windows are split into ≤364-day chunks because GitHub caps a single
-   range at one year.
+   and issues solved by someone other than the opener. For merged PRs whose head branch was deleted
+   or lives in a fork, the original commits are read from `/pulls/{n}/commits`; commits already
+   credited on the base branch — including rebased copies — are recognised and skipped so a change
+   is counted once. Any repository listed in `LEADERBOARD_EXTRA_REPOS` is scanned the same way and
+   merged in, even though it is outside the organization. Multi-year windows are split into ≤364-day
+   chunks because GitHub caps a single range at one year.
 2. **Score** — commits, pull requests, reviews and issues are weighted into one number; ties break
    deterministically. Bots and zero-activity members are dropped.
 3. **Cache** — the ranked list is stored per organization, period and range, with `generatedAt`,
