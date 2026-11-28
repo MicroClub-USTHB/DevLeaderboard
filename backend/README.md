@@ -91,7 +91,8 @@ an unknown `LOG_LEVEL`.
 | `LEADERBOARD_EXTRA_REPOS` | `MicroClub-USTHB=maito-guy/wildfire-dz` | Extra projects counted per org, as `org=owner/repo` (comma-separated). Empty = org-only |
 | `LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error` — one JSON object per line |
 | `DISCORD_WEBHOOK_URL` | — | Discord channel webhook for the daily report. Empty = report off. A secret |
-| `DISCORD_CRON` | `55 23 * * *` | When the report is posted, 5-field cron **in UTC** |
+| `DISCORD_CRON` | `0 0 * * *` | When the report is posted, 5-field cron read in `DISCORD_TIMEZONE` |
+| `DISCORD_TIMEZONE` | `Africa/Algiers` | IANA timezone of the schedule and of "the day"; the server's own timezone never matters |
 | `DISCORD_SITE_URL` | *(empty)* | Public site, linked from the report titles. Empty = no links |
 | `DISCORD_USERNAME` | `Micro Club Leaderboard` | Name the report is posted under (must not contain "discord") |
 | `DISCORD_AVATAR_URL` | `<DISCORD_SITE_URL>/favicon.png` | Picture the report is posted with. Empty without a site = the webhook's own |
