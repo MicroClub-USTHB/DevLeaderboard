@@ -160,6 +160,19 @@ const discordConfigSchema = z.object({
             .url("DISCORD_SITE_URL must be a valid URL")
             .transform((url) => url.replace(/\/+$/, "")),
     ]),
+    /** Name the messages are posted under. Discord refuses names containing "discord". */
+    Username: z
+        .string()
+        .trim()
+        .min(1, "DISCORD_USERNAME must not be empty")
+        .max(80, "DISCORD_USERNAME must be at most 80 characters")
+        .refine((name) => !/discord/i.test(name), "DISCORD_USERNAME must not contain \"discord\""),
+    /** Picture the messages are posted with; empty uses the webhook's own picture. */
+    AvatarUrl: z.union([z.literal(""), z.string().url("DISCORD_AVATAR_URL must be a valid URL")]),
+    /** People shown on today's board (Discord shows at most 10 cards per message). */
+    TodayLimit: z.coerce.number().int().min(1).max(10, "DISCORD_TODAY_LIMIT must be 1 to 10"),
+    /** People shown on this month's board. */
+    MonthLimit: z.coerce.number().int().min(1).max(10, "DISCORD_MONTH_LIMIT must be 1 to 10"),
 });
 
 export const configSchema = z.object({
