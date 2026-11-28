@@ -45,6 +45,8 @@ const listQuery = z.object({
     offset: z.coerce.number().int().min(0).max(100_000).default(0),
     // `global` is everyone who contributed; `dev` is the Dev department only.
     scope: z.enum(["global", "dev"]).default("global"),
+    // GitHub logins are at most 39 characters; empty means "no filter".
+    q: z.string().trim().max(39).optional(),
     from: dateKey.optional(),
     to: dateKey.optional(),
 });
@@ -150,8 +152,11 @@ const toHttpError = (error: GitHubError, res: Response): HttpError => {
 
 export const getLeaderboard = async (req: Request, res: Response): Promise<void> => {
     const { org } = orgParams.parse(req.params);
-    const { period, limit, offset, from, to, scope } = listQuery.parse(req.query);
+    const { period, limit, offset, from, to, scope, q } = listQuery.parse(req.query);
     const { rangeKey, customRange } = parseRange(period, from, to);
+    // Matching is case-insensitive; ranks and totals below are computed after
+    // filtering so a found contributor keeps their real position on the board.
+    const query = q?.toLowerCase() ?? "";
 
     const snapshot = await findSnapshot(org, period, rangeKey);
 
@@ -184,10 +189,16 @@ export const getLeaderboard = async (req: Request, res: Response): Promise<void>
         contributors = buildDevBoard(contributors, roster.logins);
     }
 
+    if (query.length > 0) {
+        contributors = contributors.filter((contributor) =>
+            contributor.login.toLowerCase().includes(query),
+        );
+    }
+
     const entries = contributors.slice(offset, offset + limit);
-    // Varies with the data, the audience, the projection and the range, so a
-    // stale list is never cached.
-    const etag = `W/"${snapshot.generatedAt.getTime()}-${scope}-${audience}-${contributors.length}-${limit}-${offset}-${rangeKey}"`;
+    // Varies with the data, the audience, the projection, the range and the
+    // search, so a stale list is never cached.
+    const etag = `W/"${snapshot.generatedAt.getTime()}-${scope}-${audience}-${contributors.length}-${limit}-${offset}-${rangeKey}-${query}"`;
 
     res.set("ETag", etag);
     if (req.fresh) {

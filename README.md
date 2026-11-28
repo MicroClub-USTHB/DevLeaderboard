@@ -58,11 +58,11 @@ The repo contains both halves of the product:
 ## What the app does
 
 - **Opens on the club leaderboard.** `/` redirects to `/leaderboard/MicroClub-USTHB`. The header
-  is a plain wordmark; there is no org switcher or search box.
+  is a plain wordmark; there is no org switcher. The leaderboard toolbar has a username search.
 - **Three timeline options** — **This month** (1st of the month, 00:00 UTC → now), **All time**
   (organization creation → now), and a **custom range** picked with From/To date inputs. The
-  selection lives in the URL (`?period=month|all|custom&from=YYYY-MM-DD&to=YYYY-MM-DD&page=N`) so
-  every view is shareable and bookmarkable.
+  selection lives in the URL (`?period=month|all|custom&from=YYYY-MM-DD&to=YYYY-MM-DD&page=N&q=login`)
+  so every view, including a search, is shareable and bookmarkable.
 - **No authentication.** Reads and refreshes are public. Refreshes are rate-limited per IP because
   they spend GitHub quota.
 - **Desktop table and mobile cards** with rank, commits, pull requests, reviews, issues and the
@@ -228,7 +228,7 @@ All responses are JSON; errors use `{ "error": "..." }`.
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/leaderboard/:org` | Snapshot from Mongo (never hits GitHub). `?period=month\|all\|custom&limit=1..100&offset=0..`, plus `from`/`to` for `custom`. Supports ETag/304 |
+| `GET` | `/leaderboard/:org` | Snapshot from Mongo (never hits GitHub). `?period=month\|all\|custom&limit=1..100&offset=0..&q=login`, plus `from`/`to` for `custom`. `q` is a case-insensitive username substring filter. Supports ETag/304 |
 | `GET` | `/leaderboard/:org/meta` | Score weights, organization creation date, snapshot freshness |
 | `POST` | `/leaderboard/:org/refresh` | Trigger a refresh (spends GitHub quota). `?period=…`, `from`/`to` for custom, `force=1` to bypass the cache |
 | `GET` | `/health` | `{ "status": "ok" }` |
