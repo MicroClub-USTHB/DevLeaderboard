@@ -29,6 +29,11 @@ services:
       MCID_API_KEY: ${MCID_API_KEY:-}
       MCID_DEV_ROLE_IDS: ${MCID_DEV_ROLE_IDS:-}
       MCID_ROSTER_TTL_MS: ${MCID_ROSTER_TTL_MS:-600000}
+      # Optional: the daily Discord report. Leave the webhook empty to turn it off.
+      DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
+      DISCORD_SITE_URL: ${DISCORD_SITE_URL:-}
+      DISCORD_USERNAME: ${DISCORD_USERNAME:-}
+      DISCORD_AVATAR_URL: ${DISCORD_AVATAR_URL:-}
     depends_on:
       mongo:
         condition: service_healthy

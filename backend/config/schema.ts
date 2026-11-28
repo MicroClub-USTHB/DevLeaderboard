@@ -1,5 +1,6 @@
 import { validate as validateCron } from "node-cron";
 import { z } from "zod";
+import { isValidTimeZone } from "../lib/zonedTime.js";
 
 // Atlas hands out `mongodb+srv://`, local/self-hosted uses `mongodb://`.
 const MONGODB_URL_PATTERN = /^mongodb(\+srv)?:\/\//i;
@@ -138,6 +139,51 @@ const linkConfigSchema = z.object({
     SessionSecret: z.string().min(32, "SESSION_SECRET must be at least 32 characters"),
 });
 
+// The daily Discord report: today's top 10 and this month's top 5, posted to a
+// channel webhook. Optional: without DISCORD_WEBHOOK_URL nothing is posted.
+const discordConfigSchema = z.object({
+    WebhookUrl: z
+        .string()
+        .trim()
+        .regex(
+            /^https:\/\/(?:ptb\.|canary\.)?discord(?:app)?\.com\/api\/webhooks\/\d+\/[\w-]+$/,
+            "DISCORD_WEBHOOK_URL must be a Discord channel webhook URL",
+        ),
+    Schedule: z
+        .string()
+        .min(1, "DISCORD_CRON is required")
+        .refine(validateCron, "DISCORD_CRON must be a valid cron expression"),
+    /**
+     * IANA timezone the schedule and "the day" are read in (e.g. Africa/Algiers),
+     * so the server's own timezone never matters.
+     */
+    TimeZone: z
+        .string()
+        .trim()
+        .refine(isValidTimeZone, "DISCORD_TIMEZONE must be an IANA timezone such as Africa/Algiers"),
+    /** Public site link shown in the message; empty leaves it out. */
+    SiteUrl: z.union([
+        z.literal(""),
+        z
+            .string()
+            .url("DISCORD_SITE_URL must be a valid URL")
+            .transform((url) => url.replace(/\/+$/, "")),
+    ]),
+    /** Name the messages are posted under. Discord refuses names containing "discord". */
+    Username: z
+        .string()
+        .trim()
+        .min(1, "DISCORD_USERNAME must not be empty")
+        .max(80, "DISCORD_USERNAME must be at most 80 characters")
+        .refine((name) => !/discord/i.test(name), "DISCORD_USERNAME must not contain \"discord\""),
+    /** Picture the messages are posted with; empty uses the webhook's own picture. */
+    AvatarUrl: z.union([z.literal(""), z.string().url("DISCORD_AVATAR_URL must be a valid URL")]),
+    /** People shown on today's board (Discord shows at most 10 cards per message). */
+    TodayLimit: z.coerce.number().int().min(1).max(10, "DISCORD_TODAY_LIMIT must be 1 to 10"),
+    /** People shown on this month's board. */
+    MonthLimit: z.coerce.number().int().min(1).max(10, "DISCORD_MONTH_LIMIT must be 1 to 10"),
+});
+
 export const configSchema = z.object({
     Database: databaseConfigSchema,
     Port: z.coerce.number().int().positive(),
@@ -148,8 +194,10 @@ export const configSchema = z.object({
     Log: logConfigSchema,
     Mcid: mcidConfigSchema.optional(),
     Link: linkConfigSchema.optional(),
+    Discord: discordConfigSchema.optional(),
 });
 
+export type DiscordConfig = z.infer<typeof discordConfigSchema>;
 export type McidConfig = z.infer<typeof mcidConfigSchema>;
 export type LinkConfig = z.infer<typeof linkConfigSchema>;
 export type DatabaseConfig = z.infer<typeof databaseConfigSchema>;

@@ -90,6 +90,14 @@ an unknown `LOG_LEVEL`.
 | `LEADERBOARD_ORGS` | `MicroClub-USTHB` | Comma-separated org logins to refresh automatically. Empty = scheduler off |
 | `LEADERBOARD_EXTRA_REPOS` | `MicroClub-USTHB=maito-guy/wildfire-dz` | Extra projects counted per org, as `org=owner/repo` (comma-separated). Empty = org-only |
 | `LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error` — one JSON object per line |
+| `DISCORD_WEBHOOK_URL` | — | Discord channel webhook for the daily report. Empty = report off. A secret |
+| `DISCORD_CRON` | `0 0 * * *` | When the report is posted, 5-field cron read in `DISCORD_TIMEZONE` |
+| `DISCORD_TIMEZONE` | `Africa/Algiers` | IANA timezone of the schedule and of "the day"; the server's own timezone never matters |
+| `DISCORD_SITE_URL` | *(empty)* | Public site, linked from the report titles. Empty = no links |
+| `DISCORD_USERNAME` | `Micro Club Leaderboard` | Name the report is posted under (must not contain "discord") |
+| `DISCORD_AVATAR_URL` | `<DISCORD_SITE_URL>/favicon.png` | Picture the report is posted with. Empty without a site = the webhook's own |
+| `DISCORD_TODAY_LIMIT` | `10` | People on today's board (1 to 10) |
+| `DISCORD_MONTH_LIMIT` | `5` | People on this month's board (1 to 10) |
 
 ---
 
@@ -250,6 +258,31 @@ GitHub failures are mapped and never surface as `500` from this endpoint:
 - A failure in one org or period is logged and swallowed — the read path keeps serving the
   previous snapshot either way.
 
+### Daily Discord report
+
+When `DISCORD_WEBHOOK_URL` is set, `DISCORD_CRON` (default `0 0 * * *` in `DISCORD_TIMEZONE`,
+`Africa/Algiers`: midnight Algeria time) posts two messages per org in `LEADERBOARD_ORGS`:
+
+- **Daily top 10**: the day that just ended in `DISCORD_TIMEZONE` (00:00 to 23:59:59 there),
+  always collected fresh (`force`). It is stored as a `custom` snapshot under the key
+  `tz:<timezone>:<YYYY-MM-DD>`, so it never collides with a UTC range the site asks for. The
+  title links to the site's board for that date (the site counts days in UTC).
+- **This month's top 5**: the `month` snapshot, reused when it is fresh.
+
+Each message has the board title and a summary line ("5 active today · 80 commits · 13 PRs"),
+then one card per member: their GitHub avatar and login (linked to the profile), the rank, the
+score and the non-zero counts. The podium cards are gold, silver and bronze. Discord shows at most
+10 cards in one message, which is why each board is its own message. Mentions are disabled, so
+the report never pings anyone. Discord `429` and `5xx` answers are retried; a failure is logged
+and the next day's run tries again.
+
+To send the report once, right away (same config as the server):
+
+```bash
+npm run discord:report                        # dev
+node dist/scripts/sendDiscordReport.js        # compiled / inside the container
+```
+
 ### Failure behavior (by design)
 
 The read path has **no dependency on GitHub**. If GitHub is unreachable, rate-limited, or
@@ -356,6 +389,7 @@ Live verification performed against `MicroClub-USTHB`:
 | `npm run build` | Compile to `dist/` |
 | `npm start` | Run the compiled server |
 | `npm run typecheck` | Strict type check |
+| `npm run discord:report` | Post the daily Discord report once, now |
 
 ---
 

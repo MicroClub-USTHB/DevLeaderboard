@@ -68,6 +68,12 @@ interface SyncOptions {
     /** Bypass the freshness window (the UI's explicit Refresh button). */
     force?: boolean;
     customRange?: CustomRange;
+    /**
+     * Stores a custom range under this key instead of its UTC dates. For ranges
+     * that do not start and end on UTC days (a day in another timezone), so they
+     * never collide with a range the site asks for.
+     */
+    rangeKey?: string;
 }
 
 // One refresh per org+period+range at a time; concurrent callers await the same run.
@@ -91,7 +97,7 @@ const runSync = async (
     options: SyncOptions,
 ): Promise<SyncResult> => {
     const now = options.now ?? new Date();
-    const rangeKey = rangeKeyFor(period, options.customRange);
+    const rangeKey = options.rangeKey ?? rangeKeyFor(period, options.customRange);
     const find = options.find ?? findSnapshot;
 
     // Serve a fresh cached snapshot without spending GitHub quota. The
@@ -151,7 +157,7 @@ export const syncLeaderboard = async (
     period: Period,
     options: SyncOptions = {},
 ): Promise<SyncResult> => {
-    const key = `${orgLogin.toLowerCase()}:${period}:${rangeKeyFor(period, options.customRange)}`;
+    const key = `${orgLogin.toLowerCase()}:${period}:${options.rangeKey ?? rangeKeyFor(period, options.customRange)}`;
 
     const existing = inFlight.get(key);
     if (existing !== undefined) return existing;

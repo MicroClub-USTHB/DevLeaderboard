@@ -120,6 +120,25 @@ function loadConfig(): Config {
                   SessionSecret: process.env.SESSION_SECRET ?? "",
               }
             : undefined,
+        // The daily Discord report is off unless DISCORD_WEBHOOK_URL is set.
+        Discord: process.env.DISCORD_WEBHOOK_URL?.trim()
+            ? {
+                  WebhookUrl: process.env.DISCORD_WEBHOOK_URL,
+                  Schedule: process.env.DISCORD_CRON?.trim() || defaults.DISCORD_CRON,
+                  TimeZone: process.env.DISCORD_TIMEZONE?.trim() || defaults.DISCORD_TIMEZONE,
+                  SiteUrl: process.env.DISCORD_SITE_URL?.trim() ?? "",
+                  Username: process.env.DISCORD_USERNAME?.trim() || defaults.DISCORD_USERNAME,
+                  // Unset or empty (compose passes ""): the site's favicon when the site
+                  // is known, else the webhook's own picture.
+                  AvatarUrl:
+                      process.env.DISCORD_AVATAR_URL?.trim() ||
+                      (process.env.DISCORD_SITE_URL?.trim()
+                          ? `${process.env.DISCORD_SITE_URL.trim().replace(/\/+$/, "")}/favicon.png`
+                          : ""),
+                  TodayLimit: process.env.DISCORD_TODAY_LIMIT?.trim() || defaults.DISCORD_TODAY_LIMIT,
+                  MonthLimit: process.env.DISCORD_MONTH_LIMIT?.trim() || defaults.DISCORD_MONTH_LIMIT,
+              }
+            : undefined,
     };
 
     const result = configSchema.safeParse(raw);

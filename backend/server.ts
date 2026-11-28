@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import app from "./app.js";
 import { config } from "./config/config.js";
+import { startDiscordCron, stopDiscordCron } from "./jobs/discordCron.js";
 import { connectDB } from "./infra/db/config/connectionDB.js";
 import { refreshOrgsNow, startRefreshCron, stopRefreshCron } from "./jobs/refreshCron.js";
 import { logger } from "./lib/logger.js";
@@ -19,6 +20,7 @@ const server = app.listen(config.Port, () => {
 
 // Only the long-lived process owns the scheduler: tests import `app` directly.
 startRefreshCron();
+startDiscordCron();
 
 // Populate the default org right away so the site has data before the first
 // visitor. Fire-and-forget: a slow GitHub must never delay startup.
@@ -29,6 +31,7 @@ void refreshOrgsNow(config.Leaderboard.Orgs).catch((error: unknown) => {
 const shutdown = (signal: NodeJS.Signals): void => {
     logger.info("shutdown requested", { signal });
     stopRefreshCron();
+    stopDiscordCron();
 
     server.close(() => {
         void mongoose
