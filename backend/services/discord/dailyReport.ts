@@ -76,9 +76,10 @@ export const sendDailyReport = async (
         },
     ];
 
+    const sender = { username: discord.Username, avatarUrl: discord.AvatarUrl };
     // One message per board (Discord caps a message at 10 cards); the last one carries the footer.
     for (const [index, board] of boards.entries()) {
         const footer = index === boards.length - 1 ? { text: `${orgLogin} · daily leaderboard`, at: now } : undefined;
-        await postToDiscord(discord.WebhookUrl, buildBoardMessage(board, footer));
+        await postToDiscord(discord.WebhookUrl, buildBoardMessage(board, sender, footer));
     }
 };

@@ -16,6 +16,7 @@ export interface ReportBoard {
 /** The JSON body Discord's "execute webhook" endpoint expects. */
 export interface WebhookPayload {
     username: string;
+    avatar_url?: string;
     allowed_mentions: { parse: string[] };
     content?: string;
     embeds: Array<{
@@ -86,8 +87,15 @@ const memberCard = (entry: SnapshotContributor, color: number): WebhookPayload["
  * One message per board: the title and summary as the message text, then a
  * card per member. Pure: the same board always gives the same payload.
  */
+/** Who the message is posted as. An empty picture keeps the webhook's own. */
+export interface Sender {
+    username: string;
+    avatarUrl: string;
+}
+
 export const buildBoardMessage = (
     board: ReportBoard,
+    sender: Sender,
     footer?: { text: string; at: Date },
 ): WebhookPayload => {
     const top = board.contributors.slice(0, Math.min(board.limit, MAX_EMBEDS));
@@ -101,7 +109,8 @@ export const buildBoardMessage = (
     }
 
     return {
-        username: "Micro Club Leaderboard",
+        username: sender.username,
+        ...(sender.avatarUrl ? { avatar_url: sender.avatarUrl } : {}),
         // Never ping anyone, whatever ends up in the text.
         allowed_mentions: { parse: [] },
         content: `${title}\n${top.length === 0 ? board.emptyText : plainSummary(board)}`,
