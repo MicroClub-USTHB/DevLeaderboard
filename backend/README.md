@@ -263,11 +263,13 @@ GitHub failures are mapped and never surface as `500` from this endpoint:
 
 ### Daily Discord report
 
-When `DISCORD_WEBHOOK_URL` is set, `DISCORD_CRON` (default 23:55 UTC, just before the day ends)
-posts two messages per org in `LEADERBOARD_ORGS` to the channel:
+When `DISCORD_WEBHOOK_URL` is set, `DISCORD_CRON` (default `0 0 * * *` in `DISCORD_TIMEZONE`,
+`Africa/Algiers`: midnight Algeria time) posts two messages per org in `LEADERBOARD_ORGS`:
 
-- **Today's top 10**: today's UTC day, always collected fresh (`force`) and stored as the
-  `custom` snapshot for that day, so the linked title opens the same board on the site.
+- **Daily top 10**: the day that just ended in `DISCORD_TIMEZONE` (00:00 to 23:59:59 there),
+  always collected fresh (`force`). It is stored as a `custom` snapshot under the key
+  `tz:<timezone>:<YYYY-MM-DD>`, so it never collides with a UTC range the site asks for. The
+  title links to the site's board for that date (the site counts days in UTC).
 - **This month's top 5**: the `month` snapshot, reused when it is fresh.
 
 Each message has the board title and a summary line ("5 active today · 80 commits · 13 PRs"),
