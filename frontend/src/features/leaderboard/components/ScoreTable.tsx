@@ -10,6 +10,8 @@ interface ScoreTableProps {
     entries: LeaderboardEntry[];
     /** Full board size, so bottom-zone colors survive pagination. */
     total: number;
+    /** GitHub login of the signed-in member, highlighted in amber. */
+    viewerLogin?: string | null;
 }
 
 const HEADERS = ["Rank", "Contributor", "Commits", "PRs", "Reviews", "Issues", "Score"] as const;
@@ -23,7 +25,7 @@ const rowZoneClass: Record<RankZone, string> = {
 };
 
 /** Desktop leaderboard. `table-fixed` + right-aligned numerics keep columns stable. */
-export const ScoreTable = ({ entries, total }: ScoreTableProps): ReactNode => (
+export const ScoreTable = ({ entries, total, viewerLogin }: ScoreTableProps): ReactNode => (
     <div className="hidden overflow-hidden rounded-[0.9rem] border border-line bg-surface md:block">
         <table className="w-full table-fixed border-collapse">
             <thead>
@@ -47,6 +49,10 @@ export const ScoreTable = ({ entries, total }: ScoreTableProps): ReactNode => (
             <tbody>
                 {entries.map((entry) => {
                     const zone = rankZone(entry.rank, total);
+                    const isYou =
+                        viewerLogin !== undefined &&
+                        viewerLogin !== null &&
+                        entry.login.toLowerCase() === viewerLogin.toLowerCase();
 
                     return (
                         <tr
@@ -54,10 +60,11 @@ export const ScoreTable = ({ entries, total }: ScoreTableProps): ReactNode => (
                             className={cn(
                                 "border-b border-l-2 border-line/60 transition-colors duration-150 last:border-b-0",
                                 rowZoneClass[zone],
+                                isYou && "border-l-warning bg-warning/10 hover:bg-warning/15",
                             )}
                         >
                             <td className="px-4 py-3">
-                                <RankBadge rank={entry.rank} zone={zone} />
+                                <RankBadge rank={entry.rank} zone={zone} isYou={isYou} />
                             </td>
                             <td className="px-4 py-3">
                                 <ContributorLink
@@ -66,6 +73,7 @@ export const ScoreTable = ({ entries, total }: ScoreTableProps): ReactNode => (
                                     className="w-fit max-w-full"
                                     avatarClassName="bg-overlay"
                                     nameClassName="text-sm font-medium text-ink"
+                                    isYou={isYou}
                                 />
                             </td>
                             <td className={`${cellClass} text-right`}>

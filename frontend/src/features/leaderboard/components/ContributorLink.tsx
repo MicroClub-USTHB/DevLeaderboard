@@ -9,6 +9,8 @@ interface ContributorLinkProps {
     /** Classes for the login text (size, weight, color). */
     nameClassName?: string;
     className?: string;
+    /** Adds a small "you" marker for the signed-in contributor. */
+    isYou?: boolean;
 }
 
 /** Every login on the board is a GitHub account, so its profile lives at github.com/<login>. */
@@ -25,12 +27,13 @@ export const ContributorLink = ({
     avatarClassName,
     nameClassName,
     className,
+    isYou = false,
 }: ContributorLinkProps): ReactNode => (
     <a
         href={githubProfileUrl(login)}
         target="_blank"
         rel="noopener noreferrer"
-        aria-label={`${login} on GitHub (opens in a new tab)`}
+        aria-label={`${login}${isYou ? " (you)" : ""} on GitHub (opens in a new tab)`}
         className={cn(
             "group flex min-w-0 items-center gap-3 rounded-md",
             "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-500",
@@ -51,5 +54,10 @@ export const ContributorLink = ({
         >
             {login}
         </span>
+        {isYou && (
+            <span className="shrink-0 rounded-full bg-warning/15 px-1.5 py-0.5 text-[10px] font-bold text-warning">
+                you
+            </span>
+        )}
     </a>
 );

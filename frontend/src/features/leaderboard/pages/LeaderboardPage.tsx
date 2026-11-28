@@ -1,6 +1,6 @@
-import { useEffect, useMemo, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
-import { Inbox, RefreshCw } from "lucide-react";
+import { Inbox, RefreshCw, Search } from "lucide-react";
 import { ApiError } from "@/shared/api/client";
 import { hasSnapshot, PERIODS, SCOPES, type Period, type Scope } from "@/shared/api/types";
 import { defaultCustomRange, validateRange, type DateRange } from "@/shared/lib/dates";
@@ -9,6 +9,7 @@ import { Button } from "@/shared/ui/Button";
 import { EmptyState, ErrorState, Skeleton } from "@/shared/ui/States";
 import { DEFAULT_PERIOD, DEFAULT_SCOPE, MAX_CUSTOM_DAYS, PAGE_SIZE } from "../constants";
 import { useLeaderboard } from "../api";
+import { useLinkStatus } from "@/features/link/api";
 import { LinkGithubPanel } from "@/features/link/components/LinkGithubPanel";
 import { LeaderboardHero } from "../components/LeaderboardHero";
 import { Pagination } from "../components/Pagination";
@@ -25,6 +26,8 @@ const isScope = (value: string | null): value is Scope =>
     value !== null && (SCOPES as readonly string[]).includes(value);
 
 const MAX_PAGE = 5_000;
+/** GitHub login limit, mirrored by the server's `q` validation. */
+const MAX_QUERY_LENGTH = 39;
 
 const parsePage = (value: string | null): number => {
     const parsed = Number(value);
@@ -45,6 +48,29 @@ export const LeaderboardPage = (): ReactNode => {
     const rawTo = searchParams.get("to");
     const page = parsePage(searchParams.get("page"));
     const offset = (page - 1) * PAGE_SIZE;
+    const rawQuery = searchParams.get("q") ?? "";
+    const [queryInput, setQueryInput] = useState(rawQuery);
+
+    // The URL stays the source of truth so a search is shareable. Typing is
+    // debounced before it becomes a URL change (and a new API request).
+    useEffect(() => {
+        setQueryInput(rawQuery);
+    }, [rawQuery]);
+
+    useEffect(() => {
+        const next = queryInput.trim();
+        if (next === rawQuery) return;
+
+        const timer = window.setTimeout(() => {
+            const params = new URLSearchParams(searchParams);
+            if (next.length === 0) params.delete("q");
+            else params.set("q", next);
+            params.delete("page");
+            setSearchParams(params, { replace: true });
+        }, 250);
+
+        return () => window.clearTimeout(timer);
+    }, [queryInput, rawQuery, searchParams, setSearchParams]);
 
     // A valid range from the URL, or the default 30-day window for a bad one.
     const customRange = useMemo<DateRange | null>(() => {
@@ -79,9 +105,52 @@ export const LeaderboardPage = (): ReactNode => {
         scope,
         limit: PAGE_SIZE,
         offset,
+        q: rawQuery.length > 0 ? rawQuery : undefined,
         from: rangeFrom ?? undefined,
         to: rangeTo ?? undefined,
     });
+
+    // The linked GitHub login is the only viewer identity the board can match.
+    const linkStatus = useLinkStatus();
+    const viewerLogin =
+        linkStatus.data?.enabled === true && linkStatus.data.github !== null
+            ? linkStatus.data.github.toLowerCase()
+            : null;
+
+    // Reuse the `q` filter to look up the viewer's row without downloading every page.
+    const viewerBoard = useLeaderboard(
+        {
+            org,
+            period,
+            scope,
+            limit: 100,
+            offset: 0,
+            q: viewerLogin ?? undefined,
+            from: rangeFrom ?? undefined,
+            to: rangeTo ?? undefined,
+        },
+        viewerLogin !== null,
+    );
+
+    // A filtered table must not replace the podium: keep the real top three.
+    const podiumBoard = useLeaderboard(
+        {
+            org,
+            period,
+            scope,
+            limit: 3,
+            offset: 0,
+            from: rangeFrom ?? undefined,
+            to: rangeTo ?? undefined,
+        },
+        rawQuery.length > 0,
+    );
+    const podiumEntries =
+        rawQuery.length > 0 &&
+        podiumBoard.data !== undefined &&
+        hasSnapshot(podiumBoard.data)
+            ? podiumBoard.data.entries
+            : undefined;
 
     const changeTimeline = (selection: TimelineSelection): void => {
         const params = new URLSearchParams(searchParams);
@@ -126,6 +195,31 @@ export const LeaderboardPage = (): ReactNode => {
 
     const snapshot =
         leaderboard.data !== undefined && hasSnapshot(leaderboard.data) ? leaderboard.data : null;
+
+    const viewerEntry =
+        viewerLogin !== null &&
+        viewerBoard.data !== undefined &&
+        hasSnapshot(viewerBoard.data)
+            ? (viewerBoard.data.entries.find(
+                  (entry) => entry.login.toLowerCase() === viewerLogin,
+              ) ?? null)
+            : null;
+    // On an unfiltered page one, pin the viewer below the page even when their
+    // rank puts them further down the board.
+    const pinnedViewer =
+        viewerEntry !== null &&
+        viewerLogin !== null &&
+        page === 1 &&
+        rawQuery.length === 0 &&
+        snapshot !== null &&
+        !snapshot.entries.some((entry) => entry.login.toLowerCase() === viewerLogin);
+    const displayEntries =
+        snapshot === null
+            ? []
+            : pinnedViewer && viewerEntry !== null
+              ? [...snapshot.entries, viewerEntry]
+              : snapshot.entries;
+
     const totalPages = snapshot === null ? 1 : Math.max(1, Math.ceil(snapshot.total / PAGE_SIZE));
     const firstShown = snapshot === null || snapshot.entries.length === 0 ? 0 : offset + 1;
     const lastShown = snapshot === null ? 0 : offset + snapshot.entries.length;
@@ -144,7 +238,13 @@ export const LeaderboardPage = (): ReactNode => {
 
     return (
         <div className="space-y-6">
-            <LeaderboardHero org={org} scope={scope} snapshot={snapshot} offset={offset} />
+            <LeaderboardHero
+                org={org}
+                scope={scope}
+                snapshot={snapshot}
+                offset={offset}
+                podiumEntries={podiumEntries}
+            />
 
             {/* Toolbar: who the board counts, and the time window */}
             <div
@@ -155,6 +255,25 @@ export const LeaderboardPage = (): ReactNode => {
                     Rankings
                 </h2>
                 <div className="flex flex-wrap items-end gap-2">
+                    <label className="relative w-full sm:w-56">
+                        <span className="sr-only">Search by GitHub username</span>
+                        <Search
+                            size={15}
+                            aria-hidden
+                            className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-ink-faint"
+                        />
+                        <input
+                            type="search"
+                            value={queryInput}
+                            onChange={(event) => setQueryInput(event.target.value)}
+                            placeholder="Find a username"
+                            autoComplete="off"
+                            autoCapitalize="none"
+                            spellCheck={false}
+                            maxLength={MAX_QUERY_LENGTH}
+                            className="h-10 w-full rounded-lg border border-line bg-canvas pr-3 pl-9 text-sm text-ink placeholder:text-ink-faint focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent-500"
+                        />
+                    </label>
                     <ScopeSelector value={scope} onChange={changeScope} />
                     <TimelineSelector
                         value={period}
@@ -215,36 +334,64 @@ export const LeaderboardPage = (): ReactNode => {
                             </span>{" "}
                             of <span className="text-ink-muted tabular">{snapshot.total}</span>{" "}
                             {scope === "dev" ? "Dev members" : "contributors"}
-                        </p>
-
-                        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ink-faint">
-                            <span className="inline-flex items-center gap-1.5">
-                                <span className="size-2 rounded-full bg-success" aria-hidden />
-                                Top 4
-                            </span>
-                            {snapshot.total > 7 && (
-                                <span className="inline-flex items-center gap-1.5">
-                                    <span className="size-2 rounded-full bg-danger" aria-hidden />
-                                    Bottom 3
+                            {rawQuery.length > 0 && (
+                                <>
+                                    {" "}
+                                    matching <span className="text-ink-muted">@{rawQuery}</span>
+                                </>
+                            )}
+                            {pinnedViewer && viewerEntry !== null && (
+                                <span className="text-warning">
+                                    {" "}
+                                    · you (#{viewerEntry.rank}) shown below
                                 </span>
                             )}
-                        </div>
+                        </p>
+
+                        {rawQuery.length === 0 && (
+                            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ink-faint">
+                                <span className="inline-flex items-center gap-1.5">
+                                    <span className="size-2 rounded-full bg-success" aria-hidden />
+                                    Top 4
+                                </span>
+                                {snapshot.total > 7 && (
+                                    <span className="inline-flex items-center gap-1.5">
+                                        <span className="size-2 rounded-full bg-danger" aria-hidden />
+                                        Bottom 3
+                                    </span>
+                                )}
+                            </div>
+                        )}
                     </div>
 
                     {snapshot.entries.length === 0 ? (
                         <EmptyState
                             icon={<Inbox size={20} />}
-                            title="No activity in this period"
+                            title={
+                                rawQuery.length > 0
+                                    ? `No match for @${rawQuery}`
+                                    : "No activity in this period"
+                            }
                             description={
-                                scope === "dev"
-                                    ? "No Dev member contributed during this window, or they have not linked their GitHub account yet. Try a different range."
-                                    : "Nobody contributed during the selected window. Try a different range."
+                                rawQuery.length > 0
+                                    ? "Try another username, or clear the search to see the full board."
+                                    : scope === "dev"
+                                      ? "No Dev member contributed during this window, or they have not linked their GitHub account yet. Try a different range."
+                                      : "Nobody contributed during the selected window. Try a different range."
                             }
                         />
                     ) : (
                         <>
-                            <ScoreTable entries={snapshot.entries} total={snapshot.total} />
-                            <ScoreCards entries={snapshot.entries} total={snapshot.total} />
+                            <ScoreTable
+                                entries={displayEntries}
+                                total={snapshot.boardTotal}
+                                viewerLogin={viewerLogin}
+                            />
+                            <ScoreCards
+                                entries={displayEntries}
+                                total={snapshot.boardTotal}
+                                viewerLogin={viewerLogin}
+                            />
                             <Pagination
                                 page={page}
                                 totalPages={totalPages}

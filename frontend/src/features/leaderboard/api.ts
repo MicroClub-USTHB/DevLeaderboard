@@ -19,6 +19,8 @@ export interface LeaderboardParams {
     limit: number;
     /** Ranked contributors to skip, for server-side pagination. */
     offset: number;
+    /** Case-insensitive substring match on contributor logins. */
+    q?: string;
     /** Only meaningful for `period: "custom"`. */
     from?: string;
     to?: string;
@@ -52,6 +54,7 @@ const leaderboardKey = (params: LeaderboardParams): readonly unknown[] => [
     params.period,
     params.scope,
     rangeKeyOf(params),
+    params.q ?? "",
     params.limit,
     params.offset,
 ];
@@ -64,6 +67,7 @@ const buildQuery = (params: LeaderboardParams): string => {
     });
 
     if (params.scope !== "global") query.set("scope", params.scope);
+    if (params.q !== undefined && params.q.length > 0) query.set("q", params.q);
 
     if (params.period === "custom" && params.from !== undefined && params.to !== undefined) {
         query.set("from", params.from);
@@ -79,9 +83,10 @@ const buildQuery = (params: LeaderboardParams): string => {
  * A 202 means the server has no snapshot yet, so the query polls until the
  * first refresh (triggered by the page) writes one.
  */
-export const useLeaderboard = (params: LeaderboardParams) =>
+export const useLeaderboard = (params: LeaderboardParams, enabled = true) =>
     useQuery<LeaderboardResult>({
         queryKey: leaderboardKey(params),
+        enabled,
         queryFn: () =>
             request<LeaderboardResult>(
                 `/leaderboard/${encodeURIComponent(params.org)}?${buildQuery(params)}`,

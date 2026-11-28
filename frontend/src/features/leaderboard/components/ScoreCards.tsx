@@ -10,6 +10,8 @@ interface ScoreCardsProps {
     entries: LeaderboardEntry[];
     /** Full board size, so bottom-zone colors survive pagination. */
     total: number;
+    /** GitHub login of the signed-in member, highlighted in amber. */
+    viewerLogin?: string | null;
 }
 
 const cardZoneClass: Record<RankZone, string> = {
@@ -19,10 +21,14 @@ const cardZoneClass: Record<RankZone, string> = {
 };
 
 /** Mobile counterpart of ScoreTable — stacked cards below the md breakpoint. */
-export const ScoreCards = ({ entries, total }: ScoreCardsProps): ReactNode => (
+export const ScoreCards = ({ entries, total, viewerLogin }: ScoreCardsProps): ReactNode => (
     <ul className="space-y-2 md:hidden">
         {entries.map((entry) => {
             const zone = rankZone(entry.rank, total);
+            const isYou =
+                viewerLogin !== undefined &&
+                viewerLogin !== null &&
+                entry.login.toLowerCase() === viewerLogin.toLowerCase();
 
             return (
                 <li
@@ -30,16 +36,18 @@ export const ScoreCards = ({ entries, total }: ScoreCardsProps): ReactNode => (
                     className={cn(
                         "rounded-xl border border-l-2 border-line p-3.5 transition-colors duration-150 active:bg-overlay/60",
                         cardZoneClass[zone],
+                        isYou && "border-l-warning bg-warning/10 active:bg-warning/15",
                     )}
                 >
                     <div className="flex items-center gap-3">
-                        <RankBadge rank={entry.rank} zone={zone} />
+                        <RankBadge rank={entry.rank} zone={zone} isYou={isYou} />
                         <ContributorLink
                             login={entry.login}
                             avatarUrl={entry.avatarUrl}
                             className="flex-1"
                             avatarClassName="bg-overlay"
                             nameClassName="text-sm font-medium text-ink"
+                            isYou={isYou}
                         />
                         <span className="text-sm font-semibold text-ink tabular">
                             {formatNumber(entry.score)}

@@ -169,6 +169,9 @@ Query params:
 - `from`, `to` — required for `custom`; `YYYY-MM-DD`
 - `limit` — `1..100` (default `50`)
 - `offset` — number of ranked contributors to skip (default `0`), for pagination
+- `q` — case-insensitive substring match on GitHub logins (max 39 chars). Filtering happens after
+  ranking, so a match keeps its real `rank`; `total` becomes the number of matches and `boardTotal`
+  stays the size of the unfiltered board.
 
 ```jsonc
 // 200
@@ -179,6 +182,7 @@ Query params:
   "generatedAt": "2026-11-22T17:21:14.693Z",
   "windowFrom": "2026-11-01T00:00:00.000Z",
   "windowTo": "2026-11-22T17:21:14.693Z",
+  "boardTotal": 12,
   "total": 12,
   "count": 12,
   "entries": [
@@ -191,10 +195,11 @@ Query params:
 
 - **`202`** when no snapshot exists yet: `{ "org", "period", "rangeKey", "message" }`. Not an error —
   the client can trigger a refresh or wait for the cron run.
-- **`400`** for an invalid `org`, `period`, `limit`, `offset`, or custom range (missing dates, `from > to`,
-  future `to`, more than 366 days).
-- **`ETag` / `304`:** every `200` carries a weak ETag derived from `generatedAt`, contributor
-  count, `limit`, `offset` and `rangeKey`. Send it back as `If-None-Match` to get a bodyless `304`.
+- **`400`** for an invalid `org`, `period`, `limit`, `offset`, `q`, or custom range (missing dates,
+  `from > to`, future `to`, more than 366 days).
+- **`ETag` / `304`:** every `200` carries a weak ETag derived from `generatedAt`, scope, audience,
+  contributor count, `limit`, `offset`, `rangeKey` and `q`. Send it back as `If-None-Match` to get a
+  bodyless `304`.
 
 ### `GET /leaderboard/:org/meta`
 
