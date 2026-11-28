@@ -1,14 +1,15 @@
 import type { DiscordConfig } from "../../config/schema.js";
 import { findSnapshot } from "../../models/leaderboardSnapshot.js";
-import { endOfDayUtc, formatDateKey, rangeKeyFor, startOfMonthUtc, type CustomRange } from "../leaderboard/periods.js";
+import { dayIn, dayRangeIn, formatDay, shiftDay, type CalendarDay } from "../../lib/zonedTime.js";
 import { syncLeaderboard } from "../leaderboard/sync.js";
 import type { SnapshotContributor } from "../leaderboard/types.js";
 import { buildBoardMessage, type ReportBoard } from "./format.js";
 import { postToDiscord } from "./webhook.js";
 
-const TODAY_COLOR = 0xf5b700;
+const DAY_COLOR = 0xf5b700;
 const MONTH_COLOR = 0x5865f2;
 
+// Calendar days are built at UTC midnight below, so they are formatted in UTC.
 const dayTitle = new Intl.DateTimeFormat("en-GB", {
     weekday: "long",
     day: "numeric",
@@ -18,10 +19,7 @@ const dayTitle = new Intl.DateTimeFormat("en-GB", {
 });
 const monthTitle = new Intl.DateTimeFormat("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
 
-const todayRange = (now: Date): CustomRange => {
-    const from = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-    return { from, to: endOfDayUtc(from) };
-};
+const asUtcDate = (day: CalendarDay): Date => new Date(Date.UTC(day.year, day.month - 1, day.day));
 
 const boardUrl = (siteUrl: string, orgLogin: string, query: Record<string, string>): string =>
     siteUrl ? `${siteUrl}/leaderboard/${orgLogin}?${new URLSearchParams(query).toString()}` : "";
@@ -43,39 +41,45 @@ export interface ReportOptions {
 }
 
 /**
- * Collects today's activity (always fresh) and this month's (cached snapshot if
- * it is recent), then posts both boards to the Discord channel.
+ * Reports the last full day in the configured timezone: at 00:00 in Algiers it
+ * is the day that just ended there. The day is always collected fresh; the
+ * month board is the site's monthly snapshot (reused when recent). Both are
+ * posted to the Discord channel.
  */
 export const sendDailyReport = async (
     discord: DiscordConfig,
     orgLogin: string,
     { now = new Date(), refresh = true }: ReportOptions = {},
 ): Promise<void> => {
-    const today = todayRange(now);
-    const todayKey = formatDateKey(today.from);
+    const day = shiftDay(dayIn(now, discord.TimeZone), -1);
+    const dayRange = dayRangeIn(day, discord.TimeZone);
+    const dayKey = formatDay(day);
+    // Not the site's `YYYY-MM-DD_YYYY-MM-DD`: this day is not a UTC day.
+    const rangeKey = `tz:${discord.TimeZone}:${dayKey}`;
 
     if (refresh) {
-        await syncLeaderboard(orgLogin, "custom", { customRange: today, force: true, now });
+        await syncLeaderboard(orgLogin, "custom", { customRange: dayRange, rangeKey, force: true, now });
         await syncLeaderboard(orgLogin, "month", { now });
     }
 
-    const [todayContributors, monthContributors] = await Promise.all([
-        contributorsOf(orgLogin, "custom", rangeKeyFor("custom", today)),
+    const [dayContributors, monthContributors] = await Promise.all([
+        contributorsOf(orgLogin, "custom", rangeKey),
         contributorsOf(orgLogin, "month", ""),
     ]);
 
     const boards: ReportBoard[] = [
         {
-            title: `Today's top ${discord.TodayLimit} · ${dayTitle.format(today.from)}`,
-            url: boardUrl(discord.SiteUrl, orgLogin, { period: "custom", from: todayKey, to: todayKey }),
-            color: TODAY_COLOR,
-            contributors: todayContributors,
+            title: `Daily top ${discord.TodayLimit} · ${dayTitle.format(asUtcDate(day))}`,
+            // The site counts days in UTC, so this opens the nearest match.
+            url: boardUrl(discord.SiteUrl, orgLogin, { period: "custom", from: dayKey, to: dayKey }),
+            color: DAY_COLOR,
+            contributors: dayContributors,
             limit: discord.TodayLimit,
-            emptyText: "No activity today. Tomorrow is a new chance to ship.",
-            activeLabel: "active today",
+            emptyText: "No activity on this day.",
+            activeLabel: "active",
         },
         {
-            title: `This month's top ${discord.MonthLimit} · ${monthTitle.format(startOfMonthUtc(now))}`,
+            title: `This month's top ${discord.MonthLimit} · ${monthTitle.format(asUtcDate(day))}`,
             url: boardUrl(discord.SiteUrl, orgLogin, { period: "month" }),
             color: MONTH_COLOR,
             contributors: monthContributors,
