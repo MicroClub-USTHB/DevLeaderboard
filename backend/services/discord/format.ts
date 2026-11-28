@@ -40,6 +40,8 @@ const breakdown = (entry: SnapshotContributor): string =>
         .map((metric) => `${ICONS[metric]} ${entry[metric]}`)
         .join(" · ");
 
+const LEGEND = `${ICONS.commits} commits · ${ICONS.pullRequests} PRs · ${ICONS.reviews} reviews · ${ICONS.issues} issues`;
+
 const KEYCAPS = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"] as const;
 
 const rankMark = (rank: number): string => MEDALS[rank - 1] ?? KEYCAPS[rank - 1] ?? `**${rank}.**`;
@@ -93,7 +95,7 @@ export const buildReport = (
         ...(board.contributors[0]?.avatarUrl ? { thumbnail: { url: board.contributors[0].avatarUrl } } : {}),
         // Only the last embed carries the footer, so the message reads as one card.
         ...(index === boards.length - 1
-            ? { footer: { text: footer }, timestamp: generatedAt.toISOString() }
+            ? { footer: { text: `${footer}\n${LEGEND}` }, timestamp: generatedAt.toISOString() }
             : {}),
     })),
 });
