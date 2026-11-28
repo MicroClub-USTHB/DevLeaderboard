@@ -138,6 +138,30 @@ const linkConfigSchema = z.object({
     SessionSecret: z.string().min(32, "SESSION_SECRET must be at least 32 characters"),
 });
 
+// The daily Discord report: today's top 10 and this month's top 5, posted to a
+// channel webhook. Optional: without DISCORD_WEBHOOK_URL nothing is posted.
+const discordConfigSchema = z.object({
+    WebhookUrl: z
+        .string()
+        .trim()
+        .regex(
+            /^https:\/\/(?:ptb\.|canary\.)?discord(?:app)?\.com\/api\/webhooks\/\d+\/[\w-]+$/,
+            "DISCORD_WEBHOOK_URL must be a Discord channel webhook URL",
+        ),
+    Schedule: z
+        .string()
+        .min(1, "DISCORD_CRON is required")
+        .refine(validateCron, "DISCORD_CRON must be a valid cron expression"),
+    /** Public site link shown in the message; empty leaves it out. */
+    SiteUrl: z.union([
+        z.literal(""),
+        z
+            .string()
+            .url("DISCORD_SITE_URL must be a valid URL")
+            .transform((url) => url.replace(/\/+$/, "")),
+    ]),
+});
+
 export const configSchema = z.object({
     Database: databaseConfigSchema,
     Port: z.coerce.number().int().positive(),
@@ -148,8 +172,10 @@ export const configSchema = z.object({
     Log: logConfigSchema,
     Mcid: mcidConfigSchema.optional(),
     Link: linkConfigSchema.optional(),
+    Discord: discordConfigSchema.optional(),
 });
 
+export type DiscordConfig = z.infer<typeof discordConfigSchema>;
 export type McidConfig = z.infer<typeof mcidConfigSchema>;
 export type LinkConfig = z.infer<typeof linkConfigSchema>;
 export type DatabaseConfig = z.infer<typeof databaseConfigSchema>;
