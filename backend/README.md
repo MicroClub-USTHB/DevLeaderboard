@@ -93,6 +93,10 @@ an unknown `LOG_LEVEL`.
 | `DISCORD_WEBHOOK_URL` | — | Discord channel webhook for the daily report. Empty = report off. A secret |
 | `DISCORD_CRON` | `55 23 * * *` | When the report is posted, 5-field cron **in UTC** |
 | `DISCORD_SITE_URL` | *(empty)* | Public site, linked from the report titles. Empty = no links |
+| `DISCORD_USERNAME` | `Micro Club Leaderboard` | Name the report is posted under (must not contain "discord") |
+| `DISCORD_AVATAR_URL` | `<DISCORD_SITE_URL>/favicon.png` | Picture the report is posted with. Empty without a site = the webhook's own |
+| `DISCORD_TODAY_LIMIT` | `10` | People on today's board (1 to 10) |
+| `DISCORD_MONTH_LIMIT` | `5` | People on this month's board (1 to 10) |
 
 ---
 
