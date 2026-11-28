@@ -25,4 +25,7 @@ export const defaults = {
     LOG_LEVEL: "info",
     // Reuse the Dev list from MCID for ten minutes.
     MCID_ROSTER_TTL_MS: 10 * 60 * 1000,
+    // The Discord report runs in UTC, just before the day closes, so "today"
+    // is (almost) a whole day.
+    DISCORD_CRON: "55 23 * * *",
 } as const;
