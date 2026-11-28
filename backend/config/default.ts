@@ -25,9 +25,10 @@ export const defaults = {
     LOG_LEVEL: "info",
     // Reuse the Dev list from MCID for ten minutes.
     MCID_ROSTER_TTL_MS: 10 * 60 * 1000,
-    // The Discord report runs in UTC, just before the day closes, so "today"
-    // is (almost) a whole day.
-    DISCORD_CRON: "55 23 * * *",
+    // The Discord report goes out at midnight Algeria time and covers the day
+    // that just ended there.
+    DISCORD_CRON: "0 0 * * *",
+    DISCORD_TIMEZONE: "Africa/Algiers",
     DISCORD_USERNAME: "Micro Club Leaderboard",
     DISCORD_TODAY_LIMIT: 10,
     DISCORD_MONTH_LIMIT: 5,
