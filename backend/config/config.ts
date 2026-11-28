@@ -127,9 +127,10 @@ function loadConfig(): Config {
                   Schedule: process.env.DISCORD_CRON?.trim() || defaults.DISCORD_CRON,
                   SiteUrl: process.env.DISCORD_SITE_URL?.trim() ?? "",
                   Username: process.env.DISCORD_USERNAME?.trim() || defaults.DISCORD_USERNAME,
-                  // Unset: the site's favicon when the site is known, else the webhook's own picture.
+                  // Unset or empty (compose passes ""): the site's favicon when the site
+                  // is known, else the webhook's own picture.
                   AvatarUrl:
-                      process.env.DISCORD_AVATAR_URL?.trim() ??
+                      process.env.DISCORD_AVATAR_URL?.trim() ||
                       (process.env.DISCORD_SITE_URL?.trim()
                           ? `${process.env.DISCORD_SITE_URL.trim().replace(/\/+$/, "")}/favicon.png`
                           : ""),
