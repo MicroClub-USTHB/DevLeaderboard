@@ -3,7 +3,7 @@ import { findSnapshot } from "../../models/leaderboardSnapshot.js";
 import { endOfDayUtc, formatDateKey, rangeKeyFor, startOfMonthUtc, type CustomRange } from "../leaderboard/periods.js";
 import { syncLeaderboard } from "../leaderboard/sync.js";
 import type { SnapshotContributor } from "../leaderboard/types.js";
-import { buildReport, type ReportBoard } from "./format.js";
+import { buildBoardMessage, type ReportBoard } from "./format.js";
 import { postToDiscord } from "./webhook.js";
 
 const TODAY_LIMIT = 10;
@@ -76,5 +76,9 @@ export const sendDailyReport = async (
         },
     ];
 
-    await postToDiscord(discord.WebhookUrl, buildReport(boards, now, `${orgLogin} · daily leaderboard`));
+    // One message per board (Discord caps a message at 10 cards); the last one carries the footer.
+    for (const [index, board] of boards.entries()) {
+        const footer = index === boards.length - 1 ? { text: `${orgLogin} · daily leaderboard`, at: now } : undefined;
+        await postToDiscord(discord.WebhookUrl, buildBoardMessage(board, footer));
+    }
 };
