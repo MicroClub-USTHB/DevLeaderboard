@@ -1,4 +1,5 @@
 import type { SnapshotContributor } from "../leaderboard/types.js";
+import { SPACER_NAME } from "./spacer.js";
 
 /** One ranked board in the report (today, this month). */
 export interface ReportBoard {
@@ -19,12 +20,15 @@ export interface WebhookPayload {
     avatar_url?: string;
     allowed_mentions: { parse: string[] };
     content?: string;
+    /** Files uploaded with the message (multipart), by their index in the upload. */
+    attachments?: Array<{ id: number; filename: string }>;
     embeds: Array<{
         title?: string;
         url?: string;
         color: number;
         author?: { name: string; url?: string; icon_url?: string };
         description: string;
+        image?: { url: string };
         footer?: { text: string };
         timestamp?: string;
     }>;
@@ -80,6 +84,8 @@ const memberCard = (entry: SnapshotContributor, color: number): WebhookPayload["
             icon_url: entry.avatarUrl || `https://github.com/${entry.login}.png?size=96`,
         },
         description: `**${entry.score} pts**${counts ? `  ·  ${counts}` : ""}`,
+        // Invisible and wide: every card stretches to the same (maximum) width.
+        image: { url: `attachment://${SPACER_NAME}` },
     };
 };
 
@@ -115,5 +121,7 @@ export const buildBoardMessage = (
         allowed_mentions: { parse: [] },
         content: `${title}\n${top.length === 0 ? board.emptyText : plainSummary(board)}`,
         embeds,
+        // The cards point at the spacer image, so it is uploaded with them.
+        ...(embeds.length > 0 ? { attachments: [{ id: 0, filename: SPACER_NAME }] } : {}),
     };
 };
