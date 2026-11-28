@@ -63,6 +63,7 @@ export const sendDailyReport = async (
             contributors: todayContributors,
             limit: TODAY_LIMIT,
             emptyText: "No activity today. Tomorrow is a new chance to ship! 🚀",
+            activeLabel: "active today",
         },
         {
             title: `🏆 This month's top ${MONTH_LIMIT} · ${monthTitle.format(startOfMonthUtc(now))}`,
@@ -71,6 +72,7 @@ export const sendDailyReport = async (
             contributors: monthContributors,
             limit: MONTH_LIMIT,
             emptyText: "No activity this month yet.",
+            activeLabel: "active this month",
         },
     ];
 

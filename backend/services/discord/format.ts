@@ -9,6 +9,8 @@ export interface ReportBoard {
     contributors: readonly SnapshotContributor[];
     limit: number;
     emptyText: string;
+    /** Ends the summary line, e.g. "active today" in "5 active today · 80 commits". */
+    activeLabel: string;
 }
 
 /** The JSON body Discord's "execute webhook" endpoint expects. */
@@ -53,9 +55,23 @@ export const formatLine = (entry: SnapshotContributor): string => {
     return details ? `${head}\n\u2003\u2003${details}` : head;
 };
 
+const sum = (entries: readonly SnapshotContributor[], metric: keyof typeof ICONS): number =>
+    entries.reduce((total, entry) => total + entry[metric], 0);
+
+/** Totals over everyone on the board, not only the top: "**5** active today · 📝 **80** · 🔀 **13**". */
+export const formatSummary = (board: ReportBoard): string => {
+    const all = board.contributors;
+    const totals = (Object.keys(ICONS) as Array<keyof typeof ICONS>)
+        .map((metric) => ({ metric, total: sum(all, metric) }))
+        .filter(({ total }) => total > 0)
+        .map(({ metric, total }) => `${ICONS[metric]} **${total}**`);
+    return [`**${all.length}** ${board.activeLabel}`, ...totals].join(" · ");
+};
+
 const formatBoard = (board: ReportBoard): string => {
     const top = board.contributors.slice(0, board.limit);
-    return top.length === 0 ? board.emptyText : top.map(formatLine).join("\n");
+    if (top.length === 0) return board.emptyText;
+    return `${formatSummary(board)}\n\n${top.map(formatLine).join("\n")}`;
 };
 
 /** Builds the whole message. Pure: the same boards always give the same payload. */
