@@ -22,6 +22,7 @@ export interface WebhookPayload {
         url?: string;
         color: number;
         description: string;
+        thumbnail?: { url: string };
         footer?: { text: string };
         timestamp?: string;
     }>;
@@ -88,6 +89,8 @@ export const buildReport = (
         ...(board.url ? { url: board.url } : {}),
         color: board.color,
         description: formatBoard(board),
+        // The leader's avatar, as a small picture in the card's corner.
+        ...(board.contributors[0]?.avatarUrl ? { thumbnail: { url: board.contributors[0].avatarUrl } } : {}),
         // Only the last embed carries the footer, so the message reads as one card.
         ...(index === boards.length - 1
             ? { footer: { text: footer }, timestamp: generatedAt.toISOString() }
