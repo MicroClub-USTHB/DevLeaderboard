@@ -41,7 +41,9 @@ const breakdown = (entry: SnapshotContributor): string =>
         .filter((part): part is string => part !== null)
         .join(" · ");
 
-const rankMark = (rank: number): string => MEDALS[rank - 1] ?? `\`${String(rank).padStart(2)}.\``;
+const KEYCAPS = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"] as const;
+
+const rankMark = (rank: number): string => MEDALS[rank - 1] ?? KEYCAPS[rank - 1] ?? `**${rank}.**`;
 
 /**
  * One line per contributor. GitHub logins are letters, digits and hyphens, so
