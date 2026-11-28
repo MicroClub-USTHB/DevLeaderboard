@@ -6,8 +6,6 @@ import type { SnapshotContributor } from "../leaderboard/types.js";
 import { buildBoardMessage, type ReportBoard } from "./format.js";
 import { postToDiscord } from "./webhook.js";
 
-const TODAY_LIMIT = 10;
-const MONTH_LIMIT = 5;
 const TODAY_COLOR = 0xf5b700;
 const MONTH_COLOR = 0x5865f2;
 
@@ -57,20 +55,20 @@ export const sendDailyReport = async (
 
     const boards: ReportBoard[] = [
         {
-            title: `Today's top ${TODAY_LIMIT} · ${dayTitle.format(today.from)}`,
+            title: `Today's top ${discord.TodayLimit} · ${dayTitle.format(today.from)}`,
             url: boardUrl(discord.SiteUrl, orgLogin, { period: "custom", from: todayKey, to: todayKey }),
             color: TODAY_COLOR,
             contributors: todayContributors,
-            limit: TODAY_LIMIT,
+            limit: discord.TodayLimit,
             emptyText: "No activity today. Tomorrow is a new chance to ship.",
             activeLabel: "active today",
         },
         {
-            title: `This month's top ${MONTH_LIMIT} · ${monthTitle.format(startOfMonthUtc(now))}`,
+            title: `This month's top ${discord.MonthLimit} · ${monthTitle.format(startOfMonthUtc(now))}`,
             url: boardUrl(discord.SiteUrl, orgLogin, { period: "month" }),
             color: MONTH_COLOR,
             contributors: monthContributors,
-            limit: MONTH_LIMIT,
+            limit: discord.MonthLimit,
             emptyText: "No activity this month yet.",
             activeLabel: "active this month",
         },
