@@ -10,14 +10,14 @@ let task: ScheduledTask | undefined;
  * Sends the report for every configured org. One failure never stops the
  * others; the result says how many orgs failed.
  */
-export const sendDiscordReports = async (): Promise<number> => {
+export const sendDiscordReports = async ({ refresh = true }: { refresh?: boolean } = {}): Promise<number> => {
     const discord = config.Discord;
     if (discord === undefined) return 0;
 
     let failures = 0;
     for (const org of config.Leaderboard.Orgs) {
         try {
-            await sendDailyReport(discord, org);
+            await sendDailyReport(discord, org, { refresh });
             logger.info("posted the daily leaderboard to Discord", { org });
         } catch (error) {
             failures += 1;
