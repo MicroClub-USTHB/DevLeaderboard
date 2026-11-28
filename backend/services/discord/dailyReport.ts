@@ -4,7 +4,10 @@ import { dayIn, dayRangeIn, formatDay, shiftDay, type CalendarDay } from "../../
 import { syncLeaderboard } from "../leaderboard/sync.js";
 import type { SnapshotContributor } from "../leaderboard/types.js";
 import { buildBoardMessage, type ReportBoard } from "./format.js";
-import { postToDiscord } from "./webhook.js";
+import { SPACER_NAME, SPACER_PNG } from "./spacer.js";
+import { postToDiscord, type WebhookFile } from "./webhook.js";
+
+const SPACER: WebhookFile = { name: SPACER_NAME, contentType: "image/png", data: SPACER_PNG };
 
 const DAY_COLOR = 0xf5b700;
 const MONTH_COLOR = 0x5865f2;
@@ -93,6 +96,7 @@ export const sendDailyReport = async (
     // One message per board (Discord caps a message at 10 cards); the last one carries the footer.
     for (const [index, board] of boards.entries()) {
         const footer = index === boards.length - 1 ? { text: `${orgLogin} · daily leaderboard`, at: now } : undefined;
-        await postToDiscord(discord.WebhookUrl, buildBoardMessage(board, sender, footer));
+        const message = buildBoardMessage(board, sender, footer);
+        await postToDiscord(discord.WebhookUrl, message, message.attachments ? [SPACER] : []);
     }
 };
