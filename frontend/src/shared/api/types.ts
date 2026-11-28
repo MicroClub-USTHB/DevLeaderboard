@@ -36,6 +36,8 @@ export interface LeaderboardSnapshot {
     generatedAt: string;
     windowFrom: string;
     windowTo: string;
+    /** Board size before a `q` filter; `total` is the number of matches. */
+    boardTotal: number;
     total: number;
     count: number;
     entries: LeaderboardEntry[];

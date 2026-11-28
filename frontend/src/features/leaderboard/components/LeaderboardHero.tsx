@@ -11,6 +11,8 @@ interface LeaderboardHeroProps {
     snapshot: LeaderboardSnapshot | null;
     /** Rows skipped before this page: the podium is only the real top three on page one. */
     offset: number;
+    /** False while searching: a filtered top three is not the board's podium. */
+    showPodium?: boolean;
 }
 
 const PODIUM_SIZE = 3;
@@ -24,9 +26,15 @@ export const LeaderboardHero = ({
     scope,
     snapshot,
     offset,
+    showPodium = true,
 }: LeaderboardHeroProps): ReactNode => {
-    const podium = snapshot !== null && offset === 0 ? snapshot.entries.slice(0, PODIUM_SIZE) : [];
-    const plural = snapshot !== null && snapshot.total !== 1;
+    const podium =
+        snapshot !== null && showPodium && offset === 0
+            ? snapshot.entries.slice(0, PODIUM_SIZE)
+            : [];
+    // A search narrows `total`, but the summary still describes the whole board.
+    const boardTotal = snapshot?.boardTotal ?? snapshot?.total ?? 0;
+    const plural = snapshot !== null && boardTotal !== 1;
     const who =
         scope === "dev"
             ? plural
@@ -59,7 +67,7 @@ export const LeaderboardHero = ({
                 {snapshot !== null && (
                     <ul className="mt-6 grid gap-x-5 gap-y-2 text-sm font-medium text-hero-muted sm:grid-cols-2">
                         <HeroFact>
-                            <span className="tabular text-white">{formatNumber(snapshot.total)}</span>{" "}
+                            <span className="tabular text-white">{formatNumber(boardTotal)}</span>{" "}
                             {who}
                         </HeroFact>
                         <HeroFact>

@@ -170,7 +170,8 @@ Query params:
 - `limit` — `1..100` (default `50`)
 - `offset` — number of ranked contributors to skip (default `0`), for pagination
 - `q` — case-insensitive substring match on GitHub logins (max 39 chars). Filtering happens after
-  ranking, so a match keeps its real `rank`; `total` becomes the number of matches.
+  ranking, so a match keeps its real `rank`; `total` becomes the number of matches and `boardTotal`
+  stays the size of the unfiltered board.
 
 ```jsonc
 // 200
@@ -181,6 +182,7 @@ Query params:
   "generatedAt": "2026-11-22T17:21:14.693Z",
   "windowFrom": "2026-11-01T00:00:00.000Z",
   "windowTo": "2026-11-22T17:21:14.693Z",
+  "boardTotal": 12,
   "total": 12,
   "count": 12,
   "entries": [

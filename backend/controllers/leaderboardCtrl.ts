@@ -189,6 +189,8 @@ export const getLeaderboard = async (req: Request, res: Response): Promise<void>
         contributors = buildDevBoard(contributors, roster.logins);
     }
 
+    // Kept so the UI can still show the real board size while displaying matches.
+    const boardTotal = contributors.length;
     if (query.length > 0) {
         contributors = contributors.filter((contributor) =>
             contributor.login.toLowerCase().includes(query),
@@ -214,6 +216,7 @@ export const getLeaderboard = async (req: Request, res: Response): Promise<void>
         windowFrom: snapshot.windowFrom,
         windowTo: snapshot.windowTo,
         scope,
+        boardTotal,
         total: contributors.length,
         count: entries.length,
         entries,

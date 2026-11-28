@@ -170,7 +170,13 @@ export const LeaderboardPage = (): ReactNode => {
 
     return (
         <div className="space-y-6">
-            <LeaderboardHero org={org} scope={scope} snapshot={snapshot} offset={offset} />
+            <LeaderboardHero
+                org={org}
+                scope={scope}
+                snapshot={snapshot}
+                offset={offset}
+                showPodium={rawQuery.length === 0}
+            />
 
             {/* Toolbar: who the board counts, and the time window */}
             <div
