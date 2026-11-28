@@ -83,9 +83,10 @@ const buildQuery = (params: LeaderboardParams): string => {
  * A 202 means the server has no snapshot yet, so the query polls until the
  * first refresh (triggered by the page) writes one.
  */
-export const useLeaderboard = (params: LeaderboardParams) =>
+export const useLeaderboard = (params: LeaderboardParams, enabled = true) =>
     useQuery<LeaderboardResult>({
         queryKey: leaderboardKey(params),
+        enabled,
         queryFn: () =>
             request<LeaderboardResult>(
                 `/leaderboard/${encodeURIComponent(params.org)}?${buildQuery(params)}`,

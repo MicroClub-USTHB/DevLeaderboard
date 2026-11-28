@@ -9,6 +9,7 @@ import { Button } from "@/shared/ui/Button";
 import { EmptyState, ErrorState, Skeleton } from "@/shared/ui/States";
 import { DEFAULT_PERIOD, DEFAULT_SCOPE, MAX_CUSTOM_DAYS, PAGE_SIZE } from "../constants";
 import { useLeaderboard } from "../api";
+import { useLinkStatus } from "@/features/link/api";
 import { LinkGithubPanel } from "@/features/link/components/LinkGithubPanel";
 import { LeaderboardHero } from "../components/LeaderboardHero";
 import { Pagination } from "../components/Pagination";
@@ -109,6 +110,28 @@ export const LeaderboardPage = (): ReactNode => {
         to: rangeTo ?? undefined,
     });
 
+    // The linked GitHub login is the only viewer identity the board can match.
+    const linkStatus = useLinkStatus();
+    const viewerLogin =
+        linkStatus.data?.enabled === true && linkStatus.data.github !== null
+            ? linkStatus.data.github.toLowerCase()
+            : null;
+
+    // Reuse the `q` filter to look up the viewer's row without downloading every page.
+    const viewerBoard = useLeaderboard(
+        {
+            org,
+            period,
+            scope,
+            limit: 100,
+            offset: 0,
+            q: viewerLogin ?? undefined,
+            from: rangeFrom ?? undefined,
+            to: rangeTo ?? undefined,
+        },
+        viewerLogin !== null,
+    );
+
     const changeTimeline = (selection: TimelineSelection): void => {
         const params = new URLSearchParams(searchParams);
         params.set("period", selection.period);
@@ -152,6 +175,31 @@ export const LeaderboardPage = (): ReactNode => {
 
     const snapshot =
         leaderboard.data !== undefined && hasSnapshot(leaderboard.data) ? leaderboard.data : null;
+
+    const viewerEntry =
+        viewerLogin !== null &&
+        viewerBoard.data !== undefined &&
+        hasSnapshot(viewerBoard.data)
+            ? (viewerBoard.data.entries.find(
+                  (entry) => entry.login.toLowerCase() === viewerLogin,
+              ) ?? null)
+            : null;
+    // On an unfiltered page one, pin the viewer below the page even when their
+    // rank puts them further down the board.
+    const pinnedViewer =
+        viewerEntry !== null &&
+        viewerLogin !== null &&
+        page === 1 &&
+        rawQuery.length === 0 &&
+        snapshot !== null &&
+        !snapshot.entries.some((entry) => entry.login.toLowerCase() === viewerLogin);
+    const displayEntries =
+        snapshot === null
+            ? []
+            : pinnedViewer && viewerEntry !== null
+              ? [...snapshot.entries, viewerEntry]
+              : snapshot.entries;
+
     const totalPages = snapshot === null ? 1 : Math.max(1, Math.ceil(snapshot.total / PAGE_SIZE));
     const firstShown = snapshot === null || snapshot.entries.length === 0 ? 0 : offset + 1;
     const lastShown = snapshot === null ? 0 : offset + snapshot.entries.length;
@@ -272,6 +320,12 @@ export const LeaderboardPage = (): ReactNode => {
                                     matching <span className="text-ink-muted">@{rawQuery}</span>
                                 </>
                             )}
+                            {pinnedViewer && viewerEntry !== null && (
+                                <span className="text-warning">
+                                    {" "}
+                                    · you (#{viewerEntry.rank}) shown below
+                                </span>
+                            )}
                         </p>
 
                         {rawQuery.length === 0 && (
@@ -308,8 +362,16 @@ export const LeaderboardPage = (): ReactNode => {
                         />
                     ) : (
                         <>
-                            <ScoreTable entries={snapshot.entries} total={snapshot.total} />
-                            <ScoreCards entries={snapshot.entries} total={snapshot.total} />
+                            <ScoreTable
+                                entries={displayEntries}
+                                total={snapshot.boardTotal}
+                                viewerLogin={viewerLogin}
+                            />
+                            <ScoreCards
+                                entries={displayEntries}
+                                total={snapshot.boardTotal}
+                                viewerLogin={viewerLogin}
+                            />
                             <Pagination
                                 page={page}
                                 totalPages={totalPages}
