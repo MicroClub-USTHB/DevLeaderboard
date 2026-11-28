@@ -28,4 +28,7 @@ export const defaults = {
     // The Discord report runs in UTC, just before the day closes, so "today"
     // is (almost) a whole day.
     DISCORD_CRON: "55 23 * * *",
+    DISCORD_USERNAME: "Micro Club Leaderboard",
+    DISCORD_TODAY_LIMIT: 10,
+    DISCORD_MONTH_LIMIT: 5,
 } as const;
