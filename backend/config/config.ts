@@ -120,6 +120,14 @@ function loadConfig(): Config {
                   SessionSecret: process.env.SESSION_SECRET ?? "",
               }
             : undefined,
+        // The daily Discord report is off unless DISCORD_WEBHOOK_URL is set.
+        Discord: process.env.DISCORD_WEBHOOK_URL?.trim()
+            ? {
+                  WebhookUrl: process.env.DISCORD_WEBHOOK_URL,
+                  Schedule: process.env.DISCORD_CRON?.trim() || defaults.DISCORD_CRON,
+                  SiteUrl: process.env.DISCORD_SITE_URL?.trim() ?? "",
+              }
+            : undefined,
     };
 
     const result = configSchema.safeParse(raw);
