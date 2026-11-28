@@ -126,6 +126,15 @@ function loadConfig(): Config {
                   WebhookUrl: process.env.DISCORD_WEBHOOK_URL,
                   Schedule: process.env.DISCORD_CRON?.trim() || defaults.DISCORD_CRON,
                   SiteUrl: process.env.DISCORD_SITE_URL?.trim() ?? "",
+                  Username: process.env.DISCORD_USERNAME?.trim() || defaults.DISCORD_USERNAME,
+                  // Unset: the site's favicon when the site is known, else the webhook's own picture.
+                  AvatarUrl:
+                      process.env.DISCORD_AVATAR_URL?.trim() ??
+                      (process.env.DISCORD_SITE_URL?.trim()
+                          ? `${process.env.DISCORD_SITE_URL.trim().replace(/\/+$/, "")}/favicon.png`
+                          : ""),
+                  TodayLimit: process.env.DISCORD_TODAY_LIMIT?.trim() || defaults.DISCORD_TODAY_LIMIT,
+                  MonthLimit: process.env.DISCORD_MONTH_LIMIT?.trim() || defaults.DISCORD_MONTH_LIMIT,
               }
             : undefined,
     };
