@@ -132,6 +132,26 @@ export const LeaderboardPage = (): ReactNode => {
         viewerLogin !== null,
     );
 
+    // A filtered table must not replace the podium: keep the real top three.
+    const podiumBoard = useLeaderboard(
+        {
+            org,
+            period,
+            scope,
+            limit: 3,
+            offset: 0,
+            from: rangeFrom ?? undefined,
+            to: rangeTo ?? undefined,
+        },
+        rawQuery.length > 0,
+    );
+    const podiumEntries =
+        rawQuery.length > 0 &&
+        podiumBoard.data !== undefined &&
+        hasSnapshot(podiumBoard.data)
+            ? podiumBoard.data.entries
+            : undefined;
+
     const changeTimeline = (selection: TimelineSelection): void => {
         const params = new URLSearchParams(searchParams);
         params.set("period", selection.period);
@@ -223,7 +243,7 @@ export const LeaderboardPage = (): ReactNode => {
                 scope={scope}
                 snapshot={snapshot}
                 offset={offset}
-                showPodium={rawQuery.length === 0}
+                podiumEntries={podiumEntries}
             />
 
             {/* Toolbar: who the board counts, and the time window */}

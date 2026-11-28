@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { Trophy } from "lucide-react";
-import type { LeaderboardSnapshot, Scope } from "@/shared/api/types";
+import type { LeaderboardEntry, LeaderboardSnapshot, Scope } from "@/shared/api/types";
 import { formatDate, formatNumber, formatRelativeTime } from "@/shared/lib/format";
 import { ContributorLink } from "./ContributorLink";
 
@@ -11,8 +11,8 @@ interface LeaderboardHeroProps {
     snapshot: LeaderboardSnapshot | null;
     /** Rows skipped before this page: the podium is only the real top three on page one. */
     offset: number;
-    /** False while searching: a filtered top three is not the board's podium. */
-    showPodium?: boolean;
+    /** The real top three when a search filters the table below. */
+    podiumEntries?: LeaderboardEntry[];
 }
 
 const PODIUM_SIZE = 3;
@@ -26,11 +26,11 @@ export const LeaderboardHero = ({
     scope,
     snapshot,
     offset,
-    showPodium = true,
+    podiumEntries,
 }: LeaderboardHeroProps): ReactNode => {
     const podium =
-        snapshot !== null && showPodium && offset === 0
-            ? snapshot.entries.slice(0, PODIUM_SIZE)
+        snapshot !== null && offset === 0
+            ? (podiumEntries ?? snapshot.entries).slice(0, PODIUM_SIZE)
             : [];
     // A search narrows `total`, but the summary still describes the whole board.
     const boardTotal = snapshot?.boardTotal ?? snapshot?.total ?? 0;
