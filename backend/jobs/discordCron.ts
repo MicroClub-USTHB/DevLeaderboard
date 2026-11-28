@@ -42,12 +42,15 @@ export const startDiscordCron = (): void => {
     task = schedule(discord.Schedule, async () => {
         await sendDiscordReports();
     }, {
-        // Day and month boundaries are UTC everywhere else, so the schedule is too.
-        timezone: "UTC",
+        // Read in the report's own timezone, never the server's.
+        timezone: discord.TimeZone,
         noOverlap: true,
         unref: true,
     });
-    logger.info(`scheduled the Discord report "${discord.Schedule}" (UTC)`, { schedule: discord.Schedule });
+    logger.info(`scheduled the Discord report "${discord.Schedule}" (${discord.TimeZone})`, {
+        schedule: discord.Schedule,
+        timeZone: discord.TimeZone,
+    });
 };
 
 /** Stops the Discord report; safe to call when nothing is running. */
