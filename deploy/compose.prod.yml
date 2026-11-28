@@ -67,7 +67,8 @@ services:
       SESSION_SECRET: ${SESSION_SECRET:-}
       # Daily Discord report (today's top 10, this month's top 5). Off while the webhook is empty.
       DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
-      DISCORD_CRON: ${DISCORD_CRON:-55 23 * * *}
+      DISCORD_CRON: ${DISCORD_CRON:-0 0 * * *}
+      DISCORD_TIMEZONE: ${DISCORD_TIMEZONE:-Africa/Algiers}
       DISCORD_SITE_URL: ${DISCORD_SITE_URL:-}
       DISCORD_USERNAME: ${DISCORD_USERNAME:-Micro Club Leaderboard}
       DISCORD_AVATAR_URL: ${DISCORD_AVATAR_URL:-}
