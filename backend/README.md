@@ -382,6 +382,7 @@ Live verification performed against `MicroClub-USTHB`:
 | `npm run build` | Compile to `dist/` |
 | `npm start` | Run the compiled server |
 | `npm run typecheck` | Strict type check |
+| `npm run discord:report` | Post the daily Discord report once, now |
 
 ---
 
