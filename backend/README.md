@@ -133,7 +133,7 @@ A non-forced refresh serves a cached snapshot while it is fresh:
 
 | Period | Freshness |
 |---|---|
-| `month` | 60 seconds |
+| `month` | 15 minutes |
 | `all` | 24 hours |
 | `custom` | 24 hours |
 
@@ -149,7 +149,7 @@ All responses are JSON. Errors use `{ "error": "..." }`. There is no authenticat
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/leaderboard/:org` | Snapshot from Mongo, or `304` with a matching ETag |
-| `GET` | `/leaderboard/:org/meta` | Weights, quota, organization creation date, snapshot freshness |
+| `GET` | `/leaderboard/:org/meta` | Weights, organization creation date, snapshot freshness |
 | `POST` | `/leaderboard/:org/refresh` | Refresh one period, or `month` + `all` when `period` is omitted |
 | `GET` | `/health` | `{ "status": "ok" }` |
 
@@ -173,7 +173,6 @@ Query params:
   "windowTo": "2026-11-22T17:21:14.693Z",
   "total": 12,
   "count": 12,
-  "warnings": [],
   "entries": [
     { "key": "MDQ6VXNlcjUxMjM5NjU2", "login": "Adel2411", "avatarUrl": "...",
       "commits": 119, "pullRequests": 29, "reviews": 4, "issues": 3,
@@ -196,11 +195,9 @@ Query params:
   "org": "microclub-usthb",
   "orgCreatedAt": "2018-10-13T21:55:27.000Z",
   "scoreWeights": { "Commit": 5, "PullRequest": 10, "Review": 3, "Issue": 2 },
-  "rateLimit": { "limit": 5000, "remaining": 4734, "resource": "graphql",
-                 "resetAt": "2026-11-22T18:00:00.000Z" },   // null before any GitHub call
   "snapshots": [
     { "period": "month", "rangeKey": "", "orgCreatedAt": "...",
-      "windowFrom": "...", "windowTo": "...", "generatedAt": "...", "entryCount": 12 }
+      "windowFrom": "...", "windowTo": "...", "generatedAt": "..." }
   ]
 }
 ```
@@ -220,7 +217,7 @@ Query params:
   "results": [
     { "orgLogin": "microclub-usthb", "period": "month", "rangeKey": "",
       "generatedAt": "...", "windowFrom": "...", "windowTo": "...",
-      "entryCount": 12, "warnings": [], "skipped": false }
+      "warnings": [], "skipped": false }
   ]
 }
 ```
