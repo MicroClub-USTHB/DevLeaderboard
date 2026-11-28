@@ -27,18 +27,14 @@ export interface WebhookPayload {
 
 const MEDALS = ["🥇", "🥈", "🥉"] as const;
 
-const plural = (count: number, word: string): string =>
-    `${count} ${word}${count === 1 ? "" : "s"}`;
+/** One icon per metric; the footer carries the legend. */
+export const ICONS = { commits: "📝", pullRequests: "🔀", reviews: "👀", issues: "🐛" } as const;
 
-/** Only the non-zero counts, so a line stays short: "5 commits · 1 PR". */
+/** Only the non-zero counts, so a line stays short: "📝 5 · 🔀 1". */
 const breakdown = (entry: SnapshotContributor): string =>
-    [
-        entry.commits > 0 ? plural(entry.commits, "commit") : null,
-        entry.pullRequests > 0 ? plural(entry.pullRequests, "PR") : null,
-        entry.reviews > 0 ? plural(entry.reviews, "review") : null,
-        entry.issues > 0 ? plural(entry.issues, "issue") : null,
-    ]
-        .filter((part): part is string => part !== null)
+    (Object.keys(ICONS) as Array<keyof typeof ICONS>)
+        .filter((metric) => entry[metric] > 0)
+        .map((metric) => `${ICONS[metric]} ${entry[metric]}`)
         .join(" · ");
 
 const KEYCAPS = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"] as const;
@@ -46,13 +42,15 @@ const KEYCAPS = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣
 const rankMark = (rank: number): string => MEDALS[rank - 1] ?? KEYCAPS[rank - 1] ?? `**${rank}.**`;
 
 /**
- * One line per contributor. GitHub logins are letters, digits and hyphens, so
- * they cannot break the Markdown or mention anyone.
+ * Two lines per contributor: rank, name and score, then the counts. GitHub
+ * logins are letters, digits and hyphens, so they cannot break the Markdown or
+ * mention anyone.
  */
 export const formatLine = (entry: SnapshotContributor): string => {
     const name = `[${entry.login}](https://github.com/${entry.login})`;
     const details = breakdown(entry);
-    return `${rankMark(entry.rank)} **${name}** · **${entry.score}** pts${details ? ` — ${details}` : ""}`;
+    const head = `${rankMark(entry.rank)} **${name}** · **${entry.score}** pts`;
+    return details ? `${head}\n\u2003\u2003${details}` : head;
 };
 
 const formatBoard = (board: ReportBoard): string => {
