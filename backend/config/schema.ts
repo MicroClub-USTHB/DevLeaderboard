@@ -1,5 +1,6 @@
 import { validate as validateCron } from "node-cron";
 import { z } from "zod";
+import { isValidTimeZone } from "../lib/zonedTime.js";
 
 // Atlas hands out `mongodb+srv://`, local/self-hosted uses `mongodb://`.
 const MONGODB_URL_PATTERN = /^mongodb(\+srv)?:\/\//i;
@@ -152,6 +153,14 @@ const discordConfigSchema = z.object({
         .string()
         .min(1, "DISCORD_CRON is required")
         .refine(validateCron, "DISCORD_CRON must be a valid cron expression"),
+    /**
+     * IANA timezone the schedule and "the day" are read in (e.g. Africa/Algiers),
+     * so the server's own timezone never matters.
+     */
+    TimeZone: z
+        .string()
+        .trim()
+        .refine(isValidTimeZone, "DISCORD_TIMEZONE must be an IANA timezone such as Africa/Algiers"),
     /** Public site link shown in the message; empty leaves it out. */
     SiteUrl: z.union([
         z.literal(""),
