@@ -125,6 +125,7 @@ function loadConfig(): Config {
             ? {
                   WebhookUrl: process.env.DISCORD_WEBHOOK_URL,
                   Schedule: process.env.DISCORD_CRON?.trim() || defaults.DISCORD_CRON,
+                  TimeZone: process.env.DISCORD_TIMEZONE?.trim() || defaults.DISCORD_TIMEZONE,
                   SiteUrl: process.env.DISCORD_SITE_URL?.trim() ?? "",
                   Username: process.env.DISCORD_USERNAME?.trim() || defaults.DISCORD_USERNAME,
                   // Unset or empty (compose passes ""): the site's favicon when the site
