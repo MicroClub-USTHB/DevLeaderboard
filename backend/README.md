@@ -256,6 +256,26 @@ GitHub failures are mapped and never surface as `500` from this endpoint:
 - A failure in one org or period is logged and swallowed — the read path keeps serving the
   previous snapshot either way.
 
+### Daily Discord report
+
+When `DISCORD_WEBHOOK_URL` is set, `DISCORD_CRON` (default 23:55 UTC, just before the day ends)
+posts one message per org in `LEADERBOARD_ORGS` to the channel:
+
+- **Today's top 10**: today's UTC day, always collected fresh (`force`) and stored as the
+  `custom` snapshot for that day, so the link in the message opens the same board on the site.
+- **This month's top 5**: the `month` snapshot, reused when it is fresh.
+
+Each line shows the rank (🥇🥈🥉 for the podium), the GitHub login linked to the profile, the
+score and the non-zero counts. Mentions are disabled, so the message never pings anyone. Discord
+`429` and `5xx` answers are retried; a failure is logged and the next day's run tries again.
+
+To send the report once, right away (same config as the server):
+
+```bash
+npm run discord:report                        # dev
+node dist/scripts/sendDiscordReport.js        # compiled / inside the container
+```
+
 ### Failure behavior (by design)
 
 The read path has **no dependency on GitHub**. If GitHub is unreachable, rate-limited, or
