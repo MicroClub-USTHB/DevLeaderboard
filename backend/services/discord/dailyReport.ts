@@ -57,16 +57,16 @@ export const sendDailyReport = async (
 
     const boards: ReportBoard[] = [
         {
-            title: `🔥 Today's top ${TODAY_LIMIT} · ${dayTitle.format(today.from)}`,
+            title: `Today's top ${TODAY_LIMIT} · ${dayTitle.format(today.from)}`,
             url: boardUrl(discord.SiteUrl, orgLogin, { period: "custom", from: todayKey, to: todayKey }),
             color: TODAY_COLOR,
             contributors: todayContributors,
             limit: TODAY_LIMIT,
-            emptyText: "No activity today. Tomorrow is a new chance to ship! 🚀",
+            emptyText: "No activity today. Tomorrow is a new chance to ship.",
             activeLabel: "active today",
         },
         {
-            title: `🏆 This month's top ${MONTH_LIMIT} · ${monthTitle.format(startOfMonthUtc(now))}`,
+            title: `This month's top ${MONTH_LIMIT} · ${monthTitle.format(startOfMonthUtc(now))}`,
             url: boardUrl(discord.SiteUrl, orgLogin, { period: "month" }),
             color: MONTH_COLOR,
             contributors: monthContributors,
