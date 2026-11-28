@@ -6,19 +6,25 @@ import { sendDailyReport } from "../services/discord/dailyReport.js";
 
 let task: ScheduledTask | undefined;
 
-/** Sends the report for every configured org. One failure never stops the others. */
-export const sendDiscordReports = async (): Promise<void> => {
+/**
+ * Sends the report for every configured org. One failure never stops the
+ * others; the result says how many orgs failed.
+ */
+export const sendDiscordReports = async (): Promise<number> => {
     const discord = config.Discord;
-    if (discord === undefined) return;
+    if (discord === undefined) return 0;
 
+    let failures = 0;
     for (const org of config.Leaderboard.Orgs) {
         try {
             await sendDailyReport(discord, org);
             logger.info("posted the daily leaderboard to Discord", { org });
         } catch (error) {
+            failures += 1;
             logger.error("could not post the daily leaderboard to Discord", { org, err: error });
         }
     }
+    return failures;
 };
 
 /** Starts the daily Discord report. Off while DISCORD_WEBHOOK_URL is empty. */
@@ -33,7 +39,9 @@ export const startDiscordCron = (): void => {
         return;
     }
 
-    task = schedule(discord.Schedule, () => sendDiscordReports(), {
+    task = schedule(discord.Schedule, async () => {
+        await sendDiscordReports();
+    }, {
         // Day and month boundaries are UTC everywhere else, so the schedule is too.
         timezone: "UTC",
         noOverlap: true,
