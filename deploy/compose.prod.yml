@@ -69,6 +69,10 @@ services:
       DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
       DISCORD_CRON: ${DISCORD_CRON:-55 23 * * *}
       DISCORD_SITE_URL: ${DISCORD_SITE_URL:-}
+      DISCORD_USERNAME: ${DISCORD_USERNAME:-Micro Club Leaderboard}
+      DISCORD_AVATAR_URL: ${DISCORD_AVATAR_URL:-}
+      DISCORD_TODAY_LIMIT: ${DISCORD_TODAY_LIMIT:-10}
+      DISCORD_MONTH_LIMIT: ${DISCORD_MONTH_LIMIT:-5}
     volumes:
       # The GitHub App private key (read-only). Unset = /dev/null, which the app ignores.
       - ${GITHUB_APP_KEY_FILE:-/dev/null}:/run/secrets/github-app.pem:ro
