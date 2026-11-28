@@ -33,6 +33,15 @@ const contributorsOf = async (
     rangeKey: string,
 ): Promise<SnapshotContributor[]> => (await findSnapshot(orgLogin, period, rangeKey))?.contributors ?? [];
 
+export interface ReportOptions {
+    now?: Date;
+    /**
+     * false sends what is already stored, without calling GitHub (a resend or a
+     * preview). A board with no stored snapshot then shows as empty.
+     */
+    refresh?: boolean;
+}
+
 /**
  * Collects today's activity (always fresh) and this month's (cached snapshot if
  * it is recent), then posts both boards to the Discord channel.
@@ -40,13 +49,15 @@ const contributorsOf = async (
 export const sendDailyReport = async (
     discord: DiscordConfig,
     orgLogin: string,
-    now: Date = new Date(),
+    { now = new Date(), refresh = true }: ReportOptions = {},
 ): Promise<void> => {
     const today = todayRange(now);
     const todayKey = formatDateKey(today.from);
 
-    await syncLeaderboard(orgLogin, "custom", { customRange: today, force: true, now });
-    await syncLeaderboard(orgLogin, "month", { now });
+    if (refresh) {
+        await syncLeaderboard(orgLogin, "custom", { customRange: today, force: true, now });
+        await syncLeaderboard(orgLogin, "month", { now });
+    }
 
     const [todayContributors, monthContributors] = await Promise.all([
         contributorsOf(orgLogin, "custom", rangeKeyFor("custom", today)),
