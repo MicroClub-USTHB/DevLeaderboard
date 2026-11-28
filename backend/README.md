@@ -90,6 +90,9 @@ an unknown `LOG_LEVEL`.
 | `LEADERBOARD_ORGS` | `MicroClub-USTHB` | Comma-separated org logins to refresh automatically. Empty = scheduler off |
 | `LEADERBOARD_EXTRA_REPOS` | `MicroClub-USTHB=maito-guy/wildfire-dz` | Extra projects counted per org, as `org=owner/repo` (comma-separated). Empty = org-only |
 | `LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error` — one JSON object per line |
+| `DISCORD_WEBHOOK_URL` | — | Discord channel webhook for the daily report. Empty = report off. A secret |
+| `DISCORD_CRON` | `55 23 * * *` | When the report is posted, 5-field cron **in UTC** |
+| `DISCORD_SITE_URL` | *(empty)* | Public site, linked from the report titles. Empty = no links |
 
 ---
 
