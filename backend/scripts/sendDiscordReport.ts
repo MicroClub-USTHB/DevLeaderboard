@@ -1,7 +1,8 @@
 /**
  * Sends the daily Discord report once, right now, and exits.
  *
- *   npm run discord:report
+ *   npm run discord:report               collect fresh data, then send
+ *   npm run discord:report -- --cached   send what is stored, no GitHub calls
  *
  * Uses the same config as the server (DISCORD_WEBHOOK_URL, LEADERBOARD_ORGS, ...).
  */
@@ -18,7 +19,7 @@ if (config.Discord === undefined) {
 await connectDB();
 let failures = 1;
 try {
-    failures = await sendDiscordReports();
+    failures = await sendDiscordReports({ refresh: !process.argv.includes("--cached") });
 } finally {
     await mongoose.disconnect();
 }
